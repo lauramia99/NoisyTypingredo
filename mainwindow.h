@@ -2,7 +2,9 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+
 #include "typingsession.h"
+#include "sessionsummary.h"
 
 class typingtextedit;
 
@@ -27,5 +29,9 @@ private:
     void handleKeyReleased(int key, qint64 timestampNs, bool autoRepeat);
     void appendEvent(KeyAction action, int key, qint64 timestampNs, bool autoRepeat);
     TypingSession currentSession_;
+    SessionSummary buildSessionSummary() const;
+    void updateSessionStatus();
+    void fillDwellStats(SessionSummary &summary) const;
+
 };
 #endif // MAINWINDOW_H

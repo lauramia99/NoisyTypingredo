@@ -14,6 +14,8 @@ struct TypingSession
     QUuid id;
     QDateTime startedAtUtc;
     QVector<KeystrokeEvent> events;
+    int ignoredAutoRepeatCount = 0;
+
 };
 
 

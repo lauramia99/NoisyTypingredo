@@ -14,6 +14,7 @@ qt_add_executable(NoisyTyping
     typingtextedit.cpp
     keystrokeevent.h
     typingsession.h
+    sessionsummary.h
 )
 
 target_link_libraries(NoisyTyping

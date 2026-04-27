@@ -18,6 +18,11 @@ struct SessionSummary
     double averageDwellMs = 0.0;
     double minDwellMs = 0.0;
     double maxDwellMs = 0.0;
+    int overlapPressCount = 0;
+    int flightSampleCount = 0;
+    double averageFlightMs = 0.0;
+    double minFlightMs = 0.0;
+    double maxFlightMs = 0.0;
 
 };
 

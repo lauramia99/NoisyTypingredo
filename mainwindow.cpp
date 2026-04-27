@@ -9,6 +9,17 @@
 #include <QString>
 #include <QHash>
 
+static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
+{
+    if (event.nativeScanCode != 0)
+    {
+        return (static_cast<quint64>(1) << 32) | event.nativeScanCode;
+    }
+
+    return (static_cast<quint64>(2) << 32) | static_cast<quint32>(event.key);
+}
+
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -25,11 +36,9 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(centralWidget);
 
 
-    connect(typingArea_, &typingtextedit::keyPressed, this,
-            &MainWindow::handleKeyPressed);
+    connect(typingArea_, &typingtextedit::keystrokeCaptured, this,
+            &MainWindow::handleCapturedKeystroke);
 
-    connect(typingArea_, &typingtextedit::keyReleased, this,
-            &MainWindow::handleKeyReleased);
 
     startNewSession();
 
@@ -45,26 +54,19 @@ void MainWindow::startNewSession()
     currentSession_.ignoredAutoRepeatCount = 0;
 }
 
-void MainWindow::appendEvent(KeyAction action, int key, qint64 timestampNs, bool autoRepeat)
+void MainWindow::appendEvent(const KeystrokeEvent &event)
 {
-    if (autoRepeat)
+    if (event.autoRepeat)
     {
         ++currentSession_.ignoredAutoRepeatCount;
         return;
     }
-    KeystrokeEvent event{action, key, timestampNs, autoRepeat};
     currentSession_.events.append(event);
 }
 
-void MainWindow::handleKeyPressed(int key, qint64 timestampNs, bool autoRepeat)
+void MainWindow::handleCapturedKeystroke(const KeystrokeEvent &event)
 {
-    appendEvent(KeyAction::Press, key, timestampNs, autoRepeat);
-    updateSessionStatus();
-}
-
-void MainWindow::handleKeyReleased(int key, qint64 timestampNs, bool autoRepeat)
-{
-    appendEvent(KeyAction::Release, key, timestampNs, autoRepeat);
+    appendEvent(event);
     updateSessionStatus();
 }
 
@@ -94,6 +96,7 @@ SessionSummary MainWindow::buildSessionSummary() const
     }
 
     fillDwellStats(summary);
+    fillFlightStats(summary);
     return summary;
 }
 
@@ -102,20 +105,22 @@ void MainWindow::updateSessionStatus()
     const SessionSummary summary = buildSessionSummary();
 
     statusBar()->showMessage(
-        QString("Stored: %1 | Press: %2 | Release: %3 | Dwell avg: %4 ms | Dwell samples: %5 | Open keys: %6 | Ignored repeats: %7")
+        QString("Stored: %1 | Press: %2 | Release: %3 | Dwell avg: %4 ms | Flight avg: %5 ms | Overlaps: %6 | Open keys: %7 | Ignored repeats: %8")
             .arg(summary.storedEvents)
             .arg(summary.pressCount)
             .arg(summary.releaseCount)
             .arg(summary.averageDwellMs, 0, 'f', 2)
-            .arg(summary.dwellSampleCount)
+            .arg(summary.averageFlightMs, 0, 'f', 2)
+            .arg(summary.overlapPressCount)
             .arg(summary.keysStillPressedCount)
             .arg(summary.ignoredAutoRepeatCount));
+
 
 }
 
 void MainWindow::fillDwellStats(SessionSummary &summary) const
 {
-    QHash<int, qint64> pressedKeys;
+    QHash<quint64, QVector<qint64>> pressedKeys;
     qint64 totalDwellNs = 0;
     bool hasDwellSample = false;
     qint64 minDwellNs = 0;
@@ -123,21 +128,31 @@ void MainWindow::fillDwellStats(SessionSummary &summary) const
 
     for (const KeystrokeEvent &event : currentSession_.events)
     {
+        const quint64 keyId = makePhysicalKeyId(event);
+
         if (event.action == KeyAction::Press)
         {
-            pressedKeys[event.key] = event.timestampNs;
+            pressedKeys[keyId].append(event.timestampNs);
             continue;
         }
 
-        auto it = pressedKeys.find(event.key);
-        if (it == pressedKeys.end())
+        auto it = pressedKeys.find(keyId);
+        if (it == pressedKeys.end() || it->isEmpty())
         {
             ++summary.unmatchedReleaseCount;
             continue;
         }
 
-        const qint64 dwellNs = event.timestampNs - it.value();
-        pressedKeys.erase(it);
+        const qint64 pressTimestampNs = it->first();
+        it->removeFirst();
+
+        if (it->isEmpty())
+        {
+            pressedKeys.erase(it);
+        }
+
+        const qint64 dwellNs = event.timestampNs - pressTimestampNs;
+
 
         if (dwellNs < 0)
         {
@@ -168,7 +183,12 @@ void MainWindow::fillDwellStats(SessionSummary &summary) const
         }
     }
 
-    summary.keysStillPressedCount = pressedKeys.size();
+    summary.keysStillPressedCount = 0;
+
+    for (auto it = pressedKeys.cbegin(); it != pressedKeys.cend(); ++it)
+    {
+        summary.keysStillPressedCount += it->size();
+    }
 
     if (summary.dwellSampleCount > 0)
     {
@@ -179,9 +199,86 @@ void MainWindow::fillDwellStats(SessionSummary &summary) const
     }
 }
 
+void MainWindow::fillFlightStats(SessionSummary &summary) const
+{
+    bool hasPreviousPress = false;
+    qint64 previousPressTimestampNs = 0;
+    qint64 totalFlightNs = 0;
+    bool hasFlightSample = false;
+    qint64 minFlightNs = 0;
+    qint64 maxFlightNs = 0;
+    QHash<quint64, int> activePressCounts;
+    int activePressedKeyCount = 0;
 
+    for (const KeystrokeEvent &event : currentSession_.events)
+    {
+        const quint64 keyId = makePhysicalKeyId(event);
 
+        if (event.action == KeyAction::Press)
+        {
+            if (activePressedKeyCount > 0)
+            {
+                ++summary.overlapPressCount;
+            }
 
+            if (hasPreviousPress)
+            {
+                const qint64 flightNs = event.timestampNs - previousPressTimestampNs;
+                totalFlightNs += flightNs;
+                ++summary.flightSampleCount;
+
+                if (!hasFlightSample)
+                {
+                    minFlightNs = flightNs;
+                    maxFlightNs = flightNs;
+                    hasFlightSample = true;
+                }
+                else
+                {
+                    if (flightNs < minFlightNs)
+                    {
+                        minFlightNs = flightNs;
+                    }
+
+                    if (flightNs > maxFlightNs)
+                    {
+                        maxFlightNs = flightNs;
+                    }
+                }
+            }
+
+            previousPressTimestampNs = event.timestampNs;
+            hasPreviousPress = true;
+
+            activePressCounts[keyId] += 1;
+            activePressedKeyCount += 1;
+        }
+        else
+        {
+            auto it = activePressCounts.find(keyId);
+
+            if (it != activePressCounts.end() && it.value() > 0)
+            {
+                it.value() -= 1;
+                activePressedKeyCount -= 1;
+
+                if (it.value() == 0)
+                {
+                    activePressCounts.erase(it);
+                }
+            }
+
+        }
+    }
+
+    if (summary.flightSampleCount > 0)
+    {
+        summary.averageFlightMs =
+            static_cast<double>(totalFlightNs) / summary.flightSampleCount / 1000000.0;
+        summary.minFlightMs = static_cast<double>(minFlightNs) / 1000000.0;
+        summary.maxFlightMs = static_cast<double>(maxFlightNs) / 1000000.0;
+    }
+}
 
 
 

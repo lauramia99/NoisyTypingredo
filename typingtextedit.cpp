@@ -10,15 +10,37 @@ typingtextedit::typingtextedit(QWidget *parent)
 
 void typingtextedit::keyPressEvent(QKeyEvent *event)
 {
-    emit keyPressed(event->key(), timer_.nsecsElapsed(), event->isAutoRepeat());
+    const KeystrokeEvent capturedEvent =
+        buildKeystrokeEvent(KeyAction::Press, event, timer_.nsecsElapsed());
+
+    emit keystrokeCaptured(capturedEvent);
     QPlainTextEdit::keyPressEvent(event);
+
 }
 
 void typingtextedit::keyReleaseEvent(QKeyEvent *event)
 {
-    emit keyReleased(event->key(), timer_.nsecsElapsed(), event->isAutoRepeat());
+    const KeystrokeEvent capturedEvent =
+        buildKeystrokeEvent(KeyAction::Release, event, timer_.nsecsElapsed());
+
+    emit keystrokeCaptured(capturedEvent);
+
     QPlainTextEdit::keyReleaseEvent(event);
 }
+
+static KeystrokeEvent buildKeystrokeEvent(KeyAction action, QKeyEvent *event, qint64 timestampNs)
+{
+    return KeystrokeEvent{
+        action,
+        event->key(),
+        event->nativeScanCode(),
+        event->nativeVirtualKey(),
+        event->nativeModifiers(),
+        timestampNs,
+        event->isAutoRepeat()
+    };
+}
+
 
 
 

@@ -25,13 +25,13 @@ public:
 private:
     typingtextedit *typingArea_;
     void startNewSession();
-    void handleKeyPressed(int key, qint64 timestampNs, bool autoRepeat);
-    void handleKeyReleased(int key, qint64 timestampNs, bool autoRepeat);
-    void appendEvent(KeyAction action, int key, qint64 timestampNs, bool autoRepeat);
+    void handleCapturedKeystroke(const KeystrokeEvent &event);
+    void appendEvent(const KeystrokeEvent &event);
     TypingSession currentSession_;
     SessionSummary buildSessionSummary() const;
     void updateSessionStatus();
     void fillDwellStats(SessionSummary &summary) const;
+    void fillFlightStats(SessionSummary &summary) const;
 
 };
 #endif // MAINWINDOW_H

@@ -2,6 +2,19 @@
 
 #include <QKeyEvent>
 
+static KeystrokeEvent buildKeystrokeEvent(KeyAction action, QKeyEvent *event, qint64 timestampNs)
+{
+    return KeystrokeEvent{
+        action,
+        event->key(),
+        event->nativeScanCode(),
+        event->nativeVirtualKey(),
+        event->nativeModifiers(),
+        timestampNs,
+        event->isAutoRepeat()
+    };
+}
+
 typingtextedit::typingtextedit(QWidget *parent)
     : QPlainTextEdit(parent)
 {
@@ -26,19 +39,6 @@ void typingtextedit::keyReleaseEvent(QKeyEvent *event)
     emit keystrokeCaptured(capturedEvent);
 
     QPlainTextEdit::keyReleaseEvent(event);
-}
-
-static KeystrokeEvent buildKeystrokeEvent(KeyAction action, QKeyEvent *event, qint64 timestampNs)
-{
-    return KeystrokeEvent{
-        action,
-        event->key(),
-        event->nativeScanCode(),
-        event->nativeVirtualKey(),
-        event->nativeModifiers(),
-        timestampNs,
-        event->isAutoRepeat()
-    };
 }
 
 

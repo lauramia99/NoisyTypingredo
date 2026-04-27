@@ -5,6 +5,8 @@
 
 #include "typingsession.h"
 #include "sessionsummary.h"
+#include "sessionfeaturevector.h"
+
 
 class typingtextedit;
 
@@ -32,6 +34,9 @@ private:
     void updateSessionStatus();
     void fillDwellStats(SessionSummary &summary) const;
     void fillFlightStats(SessionSummary &summary) const;
+
+    SessionFeatureVector buildFeatureVector(const SessionSummary &summary) const;
+
 
 };
 #endif // MAINWINDOW_H

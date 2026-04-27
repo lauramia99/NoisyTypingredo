@@ -100,21 +100,70 @@ SessionSummary MainWindow::buildSessionSummary() const
     return summary;
 }
 
+SessionFeatureVector MainWindow::buildFeatureVector(const SessionSummary &summary) const
+{
+    SessionFeatureVector vector;
+
+    vector.sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
+    vector.startedAtUtcIso = currentSession_.startedAtUtc.toString(Qt::ISODateWithMs);
+
+    vector.storedEvents = summary.storedEvents;
+    vector.pressCount = summary.pressCount;
+    vector.releaseCount = summary.releaseCount;
+    vector.ignoredAutoRepeatCount = summary.ignoredAutoRepeatCount;
+    vector.overlapPressCount = summary.overlapPressCount;
+    vector.unmatchedReleaseCount = summary.unmatchedReleaseCount;
+    vector.keysStillPressedCount = summary.keysStillPressedCount;
+
+    vector.durationMs = static_cast<double>(summary.durationNs) / 1000000.0;
+
+    vector.averageDwellMs = summary.averageDwellMs;
+    vector.minDwellMs = summary.minDwellMs;
+    vector.maxDwellMs = summary.maxDwellMs;
+
+    vector.averageFlightMs = summary.averageFlightMs;
+    vector.minFlightMs = summary.minFlightMs;
+    vector.maxFlightMs = summary.maxFlightMs;
+
+    if (summary.pressCount > 0)
+    {
+        vector.overlapRatio =
+            static_cast<double>(summary.overlapPressCount) / summary.pressCount;
+    }
+
+    if (summary.releaseCount > 0)
+    {
+        vector.unmatchedReleaseRatio =
+            static_cast<double>(summary.unmatchedReleaseCount) / summary.releaseCount;
+    }
+
+    const int observedEventCount =
+        summary.storedEvents + summary.ignoredAutoRepeatCount;
+
+    if (observedEventCount > 0)
+    {
+        vector.ignoredRepeatRatio =
+            static_cast<double>(summary.ignoredAutoRepeatCount) / observedEventCount;
+    }
+
+    return vector;
+}
+
+
 void MainWindow::updateSessionStatus()
 {
     const SessionSummary summary = buildSessionSummary();
+    const SessionFeatureVector featureVector = buildFeatureVector(summary);
+
 
     statusBar()->showMessage(
-        QString("Stored: %1 | Press: %2 | Release: %3 | Dwell avg: %4 ms | Flight avg: %5 ms | Overlaps: %6 | Open keys: %7 | Ignored repeats: %8")
-            .arg(summary.storedEvents)
-            .arg(summary.pressCount)
-            .arg(summary.releaseCount)
-            .arg(summary.averageDwellMs, 0, 'f', 2)
-            .arg(summary.averageFlightMs, 0, 'f', 2)
-            .arg(summary.overlapPressCount)
-            .arg(summary.keysStillPressedCount)
-            .arg(summary.ignoredAutoRepeatCount));
-
+        QString("Stored: %1 | Dwell avg: %2 ms | Flight avg: %3 ms | Overlap: %4% | Repeat: %5% | Open keys: %6")
+            .arg(featureVector.storedEvents)
+            .arg(featureVector.averageDwellMs, 0, 'f', 2)
+            .arg(featureVector.averageFlightMs, 0, 'f', 2)
+            .arg(featureVector.overlapRatio * 100.0, 0, 'f', 1)
+            .arg(featureVector.ignoredRepeatRatio * 100.0, 0, 'f', 1)
+            .arg(featureVector.keysStillPressedCount));
 
 }
 
@@ -279,6 +328,4 @@ void MainWindow::fillFlightStats(SessionSummary &summary) const
         summary.maxFlightMs = static_cast<double>(maxFlightNs) / 1000000.0;
     }
 }
-
-
 

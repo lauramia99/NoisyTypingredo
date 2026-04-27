@@ -10,7 +10,10 @@ qt_add_executable(NoisyTyping
     main.cpp
     mainwindow.cpp
     mainwindow.h
-    mainwindow.ui
+    typingtextedit.h
+    typingtextedit.cpp
+    keystrokeevent.h
+    typingsession.h
 )
 
 target_link_libraries(NoisyTyping

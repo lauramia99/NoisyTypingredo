@@ -2,8 +2,9 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include "typingsession.h"
 
-class QPlainTextEdit;
+class typingtextedit;
 
 
 // QT_BEGIN_NAMESPACE
@@ -20,5 +21,11 @@ public:
     MainWindow(QWidget *parent = nullptr);
 
 private:
+    typingtextedit *typingArea_;
+    void startNewSession();
+    void handleKeyPressed(int key, qint64 timestampNs, bool autoRepeat);
+    void handleKeyReleased(int key, qint64 timestampNs, bool autoRepeat);
+    void appendEvent(KeyAction action, int key, qint64 timestampNs, bool autoRepeat);
+    TypingSession currentSession_;
 };
 #endif // MAINWINDOW_H

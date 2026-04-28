@@ -7,6 +7,7 @@
 
 struct SessionFeatureVector
 {
+    QString participantId;
     QString sessionId;
     QString startedAtUtcIso;
 

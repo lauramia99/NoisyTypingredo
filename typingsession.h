@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QUuid>
 #include <QVector>
+#include <QString>
 
 struct TypingSession
 {
@@ -15,6 +16,8 @@ struct TypingSession
     QDateTime startedAtUtc;
     QVector<KeystrokeEvent> events;
     int ignoredAutoRepeatCount = 0;
+    QString participantId;
+
 
 };
 

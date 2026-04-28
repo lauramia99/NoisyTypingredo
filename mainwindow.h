@@ -10,7 +10,7 @@
 
 class typingtextedit;
 class QPushButton;
-
+class QLineEdit;
 
 
 // QT_BEGIN_NAMESPACE
@@ -45,7 +45,7 @@ private:
     QPushButton *saveSessionButton_;
     QPushButton *resetSessionButton_;
 
-
+    QLineEdit *participantIdEdit_;
 
 };
 #endif // MAINWINDOW_H

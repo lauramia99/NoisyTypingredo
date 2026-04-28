@@ -4,6 +4,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QDateTime>
+#include <QDir>
 #include <QUuid>
 #include <QStatusBar>
 #include <QString>
@@ -14,6 +15,10 @@
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QPushButton>
+
+#include <QLabel>
+#include <QLineEdit>
+
 
 
 static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
@@ -39,7 +44,13 @@ MainWindow::MainWindow(QWidget *parent)
     saveSessionButton_ = new QPushButton("Save Session", centralWidget);
     resetSessionButton_ = new QPushButton("Reset Session", centralWidget);
 
+    auto *participantIdLabel = new QLabel("Participant ID:", centralWidget);
+    participantIdEdit_ = new QLineEdit(centralWidget);
+    participantIdEdit_->setPlaceholderText("e.g. user_01");
+
     auto *controlsLayout = new QHBoxLayout();
+    controlsLayout->addWidget(participantIdLabel);
+    controlsLayout->addWidget(participantIdEdit_, 1);
     controlsLayout->addWidget(saveSessionButton_);
     controlsLayout->addWidget(resetSessionButton_);
     controlsLayout->addStretch();
@@ -50,7 +61,6 @@ MainWindow::MainWindow(QWidget *parent)
     layout->addLayout(controlsLayout);
     layout->addWidget(typingArea_);
 
-    layout->addWidget(typingArea_);
     setCentralWidget(centralWidget);
 
     connect(saveSessionButton_, &QPushButton::clicked,
@@ -61,6 +71,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(typingArea_, &typingtextedit::keystrokeCaptured, this,
             &MainWindow::handleCapturedKeystroke);
+
+    connect(participantIdEdit_, &QLineEdit::textChanged, this,
+            [this]() {
+                currentSession_.participantId = participantIdEdit_->text().trimmed();
+                updateSessionStatus();
+            });
 
 
     startNewSession();
@@ -75,6 +91,8 @@ void MainWindow::startNewSession()
     currentSession_.startedAtUtc = QDateTime::currentDateTimeUtc();
     currentSession_.events.clear();
     currentSession_.ignoredAutoRepeatCount = 0;
+    currentSession_.participantId = participantIdEdit_->text().trimmed();
+
 }
 
 void MainWindow::appendEvent(const KeystrokeEvent &event)
@@ -84,8 +102,10 @@ void MainWindow::appendEvent(const KeystrokeEvent &event)
         ++currentSession_.ignoredAutoRepeatCount;
         return;
     }
+
     currentSession_.events.append(event);
 }
+
 
 void MainWindow::handleCapturedKeystroke(const KeystrokeEvent &event)
 {
@@ -126,6 +146,8 @@ SessionSummary MainWindow::buildSessionSummary() const
 SessionFeatureVector MainWindow::buildFeatureVector(const SessionSummary &summary) const
 {
     SessionFeatureVector vector;
+
+    vector.participantId = currentSession_.participantId;
 
     vector.sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
     vector.startedAtUtcIso = currentSession_.startedAtUtc.toString(Qt::ISODateWithMs);
@@ -180,7 +202,8 @@ void MainWindow::updateSessionStatus()
 
 
     statusBar()->showMessage(
-        QString("Stored: %1 | Dwell avg: %2 ms | Flight avg: %3 ms | Overlap: %4% | Repeat: %5% | Open keys: %6")
+        QString("User: %1 | Stored: %2 | Dwell avg: %3 ms | Flight avg: %4 ms | Overlap: %5% | Repeat: %6% | Open keys: %7")
+            .arg(featureVector.participantId.isEmpty() ? "-" : featureVector.participantId)
             .arg(featureVector.storedEvents)
             .arg(featureVector.averageDwellMs, 0, 'f', 2)
             .arg(featureVector.averageFlightMs, 0, 'f', 2)
@@ -356,6 +379,19 @@ void MainWindow::saveCurrentSession()
 {
     const SessionSummary summary = buildSessionSummary();
 
+    if (currentSession_.participantId.isEmpty())
+    {
+        currentSession_.participantId = participantIdEdit_->text().trimmed();
+    }
+
+    if (currentSession_.participantId.isEmpty())
+    {
+        QMessageBox::warning(this, "Missing Participant ID",
+                             "Please enter a participant ID before saving the session.");
+        participantIdEdit_->setFocus();
+        return;
+    }
+
     if (summary.storedEvents == 0)
     {
         QMessageBox::information(this, "No Data",
@@ -372,6 +408,12 @@ void MainWindow::saveCurrentSession()
                              "Could not append the feature vector to the CSV file.");
         return;
     }
+
+    QMessageBox::information(
+        this,
+        "Session Saved",
+        QString("Feature vector saved to:\n%1")
+            .arg(QDir::toNativeSeparators(filePath)));
 
     typingArea_->clear();
     startNewSession();

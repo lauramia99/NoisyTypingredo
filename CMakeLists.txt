@@ -18,6 +18,8 @@ qt_add_executable(NoisyTyping
     sessionfeaturevector.h
     sessionfeaturecsvwriter.h
     sessionfeaturecsvwriter.cpp
+    sessioneventcsvwriter.h
+    sessioneventcsvwriter.cpp
 )
 
 target_link_libraries(NoisyTyping

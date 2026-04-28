@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 #include "sessionfeaturecsvwriter.h"
 #include "typingtextedit.h"
+#include "sessioneventcsvwriter.h"
+
 
 #include <QComboBox>
 #include <QDateTime>
@@ -17,6 +19,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+// Prefer physical key identity when available so overlap handling is stable.
+
 static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
 {
     if (event.nativeScanCode != 0)
@@ -26,7 +30,6 @@ static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
 
     return (static_cast<quint64>(2) << 32) | static_cast<quint32>(event.key);
 }
-// Prefer physical key identity when available so overlap handling is stable.
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -438,10 +441,21 @@ void MainWindow::saveCurrentSession()
         return;
     }
 
-    const SessionFeatureVector featureVector = buildFeatureVector(summary);
-    const QString filePath = SessionFeatureCsvWriter::defaultFilePath();
+    const QString rawSessionFilePath =
+        SessionEventCsvWriter::sessionFilePath(currentSession_);
 
-    if (!SessionFeatureCsvWriter::appendRow(filePath, featureVector))
+    if (!SessionEventCsvWriter::writeSession(rawSessionFilePath, currentSession_))
+    {
+        QMessageBox::warning(this, "Save Failed",
+                             "Could not write the raw session events CSV file.");
+        return;
+    }
+
+
+    const SessionFeatureVector featureVector = buildFeatureVector(summary);
+    const QString featureFilePath = SessionFeatureCsvWriter::defaultFilePath();
+
+    if (!SessionFeatureCsvWriter::appendRow(featureFilePath, featureVector))
     {
         QMessageBox::warning(this, "Save Failed",
                              "Could not append the feature vector to the CSV file.");
@@ -451,8 +465,10 @@ void MainWindow::saveCurrentSession()
     QMessageBox::information(
         this,
         "Session Saved",
-        QString("Feature vector saved to:\n%1")
-            .arg(QDir::toNativeSeparators(filePath)));
+        QString("Feature vector saved to:\n%1\n\nRaw session saved to:\n%2")
+            .arg(QDir::toNativeSeparators(featureFilePath))
+            .arg(QDir::toNativeSeparators(rawSessionFilePath)));
+
 
     typingArea_->clear();
     startNewSession();

@@ -9,6 +9,13 @@
 #include <QString>
 #include <QHash>
 
+#include "sessionfeaturecsvwriter.h"
+
+#include <QHBoxLayout>
+#include <QMessageBox>
+#include <QPushButton>
+
+
 static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
 {
     if (event.nativeScanCode != 0)
@@ -29,12 +36,28 @@ MainWindow::MainWindow(QWidget *parent)
     auto *centralWidget = new QWidget(this);
     auto *layout = new QVBoxLayout(centralWidget);
 
+    saveSessionButton_ = new QPushButton("Save Session", centralWidget);
+    resetSessionButton_ = new QPushButton("Reset Session", centralWidget);
+
+    auto *controlsLayout = new QHBoxLayout();
+    controlsLayout->addWidget(saveSessionButton_);
+    controlsLayout->addWidget(resetSessionButton_);
+    controlsLayout->addStretch();
+
     typingArea_ = new typingtextedit(centralWidget);
     typingArea_->setPlaceholderText("Start typing...");
+
+    layout->addLayout(controlsLayout);
+    layout->addWidget(typingArea_);
 
     layout->addWidget(typingArea_);
     setCentralWidget(centralWidget);
 
+    connect(saveSessionButton_, &QPushButton::clicked,
+            this, &MainWindow::saveCurrentSession);
+
+    connect(resetSessionButton_, &QPushButton::clicked,
+            this, &MainWindow::resetCurrentSession);
 
     connect(typingArea_, &typingtextedit::keystrokeCaptured, this,
             &MainWindow::handleCapturedKeystroke);
@@ -328,4 +351,41 @@ void MainWindow::fillFlightStats(SessionSummary &summary) const
         summary.maxFlightMs = static_cast<double>(maxFlightNs) / 1000000.0;
     }
 }
+
+void MainWindow::saveCurrentSession()
+{
+    const SessionSummary summary = buildSessionSummary();
+
+    if (summary.storedEvents == 0)
+    {
+        QMessageBox::information(this, "No Data",
+                                 "There is no captured session data to save.");
+        return;
+    }
+
+    const SessionFeatureVector featureVector = buildFeatureVector(summary);
+    const QString filePath = SessionFeatureCsvWriter::defaultFilePath();
+
+    if (!SessionFeatureCsvWriter::appendRow(filePath, featureVector))
+    {
+        QMessageBox::warning(this, "Save Failed",
+                             "Could not append the feature vector to the CSV file.");
+        return;
+    }
+
+    typingArea_->clear();
+    startNewSession();
+    updateSessionStatus();
+    typingArea_->setFocus();
+}
+
+void MainWindow::resetCurrentSession()
+{
+    typingArea_->clear();
+    startNewSession();
+    updateSessionStatus();
+    typingArea_->setFocus();
+}
+
+
 

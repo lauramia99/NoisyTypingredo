@@ -16,6 +16,7 @@ qt_add_executable(NoisyTyping
     typingsession.h
     sessionsummary.h
     sessionfeaturevector.h
+    sessionfeaturecsvwriter.h sessionfeaturecsvwriter.cpp
 )
 
 target_link_libraries(NoisyTyping
@@ -23,6 +24,11 @@ target_link_libraries(NoisyTyping
         Qt::Core
         Qt::Widgets
 )
+
+target_compile_definitions(NoisyTyping PRIVATE
+    NOISYTYPING_PROJECT_DIR="${CMAKE_SOURCE_DIR}"
+)
+
 
 include(GNUInstallDirs)
 

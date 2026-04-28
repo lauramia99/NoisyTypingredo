@@ -9,6 +9,8 @@
 
 
 class typingtextedit;
+class QPushButton;
+
 
 
 // QT_BEGIN_NAMESPACE
@@ -36,6 +38,13 @@ private:
     void fillFlightStats(SessionSummary &summary) const;
 
     SessionFeatureVector buildFeatureVector(const SessionSummary &summary) const;
+
+    void saveCurrentSession();
+    void resetCurrentSession();
+
+    QPushButton *saveSessionButton_;
+    QPushButton *resetSessionButton_;
+
 
 
 };

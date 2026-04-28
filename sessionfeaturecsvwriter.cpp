@@ -20,10 +20,23 @@ QString formatDouble(double value)
     return QLocale::c().toString(value, 'f', 6);
 }
 
+QString escapeCsv(QString value)
+{
+    value.replace('"', "\"\"");
+
+    if (value.contains(',') || value.contains('"') ||
+        value.contains('\n') || value.contains('\r'))
+    {
+        return '"' + value + '"';
+    }
+
+    return value;
+}
+
 QString csvHeader()
 {
     return QStringLiteral(
-        "participant_id,session_id,started_at_utc,stored_events,press_count,release_count,"
+        "participant_id,sample_purpose,text_mode,prompt_label,session_id,started_at_utc,stored_events,press_count,release_count,"
         "ignored_auto_repeat_count,overlap_press_count,unmatched_release_count,"
         "keys_still_pressed_count,duration_ms,average_dwell_ms,min_dwell_ms,max_dwell_ms,"
         "average_flight_ms,min_flight_ms,max_flight_ms,overlap_ratio,"
@@ -33,9 +46,12 @@ QString csvHeader()
 QString toCsvRow(const SessionFeatureVector &vector)
 {
     QStringList columns;
-    columns << vector.participantId;
-    columns << vector.sessionId;
-    columns << vector.startedAtUtcIso;
+    columns << escapeCsv(vector.participantId);
+    columns << escapeCsv(vector.samplePurpose);
+    columns << escapeCsv(vector.textMode);
+    columns << escapeCsv(vector.promptLabel);
+    columns << escapeCsv(vector.sessionId);
+    columns << escapeCsv(vector.startedAtUtcIso);
     columns << QString::number(vector.storedEvents);
     columns << QString::number(vector.pressCount);
     columns << QString::number(vector.releaseCount);
@@ -57,7 +73,6 @@ QString toCsvRow(const SessionFeatureVector &vector)
     return columns.join(',');
 }
 }
-
 
 QString SessionFeatureCsvWriter::defaultFilePath()
 {
@@ -93,7 +108,3 @@ bool SessionFeatureCsvWriter::appendRow(const QString &filePath,
     stream << toCsvRow(vector) << '\n';
     return stream.status() == QTextStream::Ok;
 }
-
-
-
-// sessionfeaturecsvwriter::sessionfeaturecsvwriter() {}

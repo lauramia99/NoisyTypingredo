@@ -20,7 +20,6 @@ struct KeystrokeEvent
     quint32 nativeModifiers;
     qint64 timestampNs;
     bool autoRepeat;
-
 };
 
 #endif // KEYSTROKEEVENT_H

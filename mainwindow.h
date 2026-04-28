@@ -7,45 +7,40 @@
 #include "sessionsummary.h"
 #include "sessionfeaturevector.h"
 
-
 class typingtextedit;
-class QPushButton;
+class QComboBox;
 class QLineEdit;
-
-
-// QT_BEGIN_NAMESPACE
-// namespace Ui {
-// class MainWindow;
-// }
-// QT_END_NAMESPACE
+class QPushButton;
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(QWidget *parent = nullptr);
 
 private:
-    typingtextedit *typingArea_;
+    void syncSessionMetadataFromUi();
     void startNewSession();
     void handleCapturedKeystroke(const KeystrokeEvent &event);
     void appendEvent(const KeystrokeEvent &event);
-    TypingSession currentSession_;
+
     SessionSummary buildSessionSummary() const;
-    void updateSessionStatus();
+    SessionFeatureVector buildFeatureVector(const SessionSummary &summary) const;
     void fillDwellStats(SessionSummary &summary) const;
     void fillFlightStats(SessionSummary &summary) const;
-
-    SessionFeatureVector buildFeatureVector(const SessionSummary &summary) const;
+    void updateSessionStatus();
 
     void saveCurrentSession();
     void resetCurrentSession();
 
-    QPushButton *saveSessionButton_;
-    QPushButton *resetSessionButton_;
-
-    QLineEdit *participantIdEdit_;
-
+    typingtextedit *typingArea_ = nullptr;
+    QLineEdit *participantIdEdit_ = nullptr;
+    QComboBox *samplePurposeCombo_ = nullptr;
+    QComboBox *textModeCombo_ = nullptr;
+    QLineEdit *promptLabelEdit_ = nullptr;
+    QPushButton *saveSessionButton_ = nullptr;
+    QPushButton *resetSessionButton_ = nullptr;
+    TypingSession currentSession_;
 };
 #endif // MAINWINDOW_H

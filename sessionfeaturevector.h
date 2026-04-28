@@ -8,6 +8,11 @@
 struct SessionFeatureVector
 {
     QString participantId;
+
+    QString samplePurpose;
+    QString textMode;
+    QString promptLabel;
+
     QString sessionId;
     QString startedAtUtcIso;
 
@@ -33,8 +38,5 @@ struct SessionFeatureVector
     double unmatchedReleaseRatio = 0.0;
     double ignoredRepeatRatio = 0.0;
 };
-
-
-
 
 #endif // SESSIONFEATUREVECTOR_H

@@ -19,8 +19,6 @@ public:
     explicit typingtextedit(QWidget *parent = nullptr);
 
 signals:
-    // void keyPressed(int key, qint64 timestampNs, bool autoRepeat);
-    // void keyReleased(int key, qint64 timestampNs, bool autoRepeat);
     void keystrokeCaptured(const KeystrokeEvent &event);
 
 protected:
@@ -29,7 +27,6 @@ protected:
 
 private:
     QElapsedTimer timer_;
-
 };
 
 #endif // TYPINGTEXTEDIT_H

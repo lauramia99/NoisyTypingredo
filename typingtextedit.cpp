@@ -28,7 +28,6 @@ void typingtextedit::keyPressEvent(QKeyEvent *event)
 
     emit keystrokeCaptured(capturedEvent);
     QPlainTextEdit::keyPressEvent(event);
-
 }
 
 void typingtextedit::keyReleaseEvent(QKeyEvent *event)
@@ -37,10 +36,6 @@ void typingtextedit::keyReleaseEvent(QKeyEvent *event)
         buildKeystrokeEvent(KeyAction::Release, event, timer_.nsecsElapsed());
 
     emit keystrokeCaptured(capturedEvent);
-
     QPlainTextEdit::keyReleaseEvent(event);
 }
-
-
-
 

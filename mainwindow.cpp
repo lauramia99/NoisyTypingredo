@@ -1,25 +1,21 @@
 #include "mainwindow.h"
+#include "sessionfeaturecsvwriter.h"
 #include "typingtextedit.h"
 
-#include <QVBoxLayout>
-#include <QWidget>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDir>
-#include <QUuid>
-#include <QStatusBar>
-#include <QString>
 #include <QHash>
-
-#include "sessionfeaturecsvwriter.h"
-
 #include <QHBoxLayout>
-#include <QMessageBox>
-#include <QPushButton>
-
 #include <QLabel>
 #include <QLineEdit>
-
-
+#include <QMessageBox>
+#include <QPushButton>
+#include <QStatusBar>
+#include <QString>
+#include <QUuid>
+#include <QVBoxLayout>
+#include <QWidget>
 
 static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
 {
@@ -30,7 +26,7 @@ static quint64 makePhysicalKeyId(const KeystrokeEvent &event)
 
     return (static_cast<quint64>(2) << 32) | static_cast<quint32>(event.key);
 }
-
+// Prefer physical key identity when available so overlap handling is stable.
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -48,9 +44,29 @@ MainWindow::MainWindow(QWidget *parent)
     participantIdEdit_ = new QLineEdit(centralWidget);
     participantIdEdit_->setPlaceholderText("e.g. user_01");
 
+    auto *samplePurposeLabel = new QLabel("Sample Purpose:", centralWidget);
+    samplePurposeCombo_ = new QComboBox(centralWidget);
+    samplePurposeCombo_->addItem("training");
+    samplePurposeCombo_->addItem("verification");
+
+    auto *textModeLabel = new QLabel("Text Mode:", centralWidget);
+    textModeCombo_ = new QComboBox(centralWidget);
+    textModeCombo_->addItem("free_text");
+    textModeCombo_->addItem("fixed_text");
+
+    auto *promptLabelLabel = new QLabel("Prompt Label:", centralWidget);
+    promptLabelEdit_ = new QLineEdit(centralWidget);
+    promptLabelEdit_->setPlaceholderText("optional, e.g. paragraph_01");
+
     auto *controlsLayout = new QHBoxLayout();
     controlsLayout->addWidget(participantIdLabel);
     controlsLayout->addWidget(participantIdEdit_, 1);
+    controlsLayout->addWidget(samplePurposeLabel);
+    controlsLayout->addWidget(samplePurposeCombo_);
+    controlsLayout->addWidget(textModeLabel);
+    controlsLayout->addWidget(textModeCombo_);
+    controlsLayout->addWidget(promptLabelLabel);
+    controlsLayout->addWidget(promptLabelEdit_, 1);
     controlsLayout->addWidget(saveSessionButton_);
     controlsLayout->addWidget(resetSessionButton_);
     controlsLayout->addStretch();
@@ -72,17 +88,41 @@ MainWindow::MainWindow(QWidget *parent)
     connect(typingArea_, &typingtextedit::keystrokeCaptured, this,
             &MainWindow::handleCapturedKeystroke);
 
+    const auto refreshSessionMetadata = [this]() {
+        syncSessionMetadataFromUi();
+        updateSessionStatus();
+    };
+
     connect(participantIdEdit_, &QLineEdit::textChanged, this,
-            [this]() {
-                currentSession_.participantId = participantIdEdit_->text().trimmed();
-                updateSessionStatus();
+            [refreshSessionMetadata](const QString &) {
+                refreshSessionMetadata();
             });
 
+    connect(samplePurposeCombo_, &QComboBox::currentTextChanged, this,
+            [refreshSessionMetadata](const QString &) {
+                refreshSessionMetadata();
+            });
+
+    connect(textModeCombo_, &QComboBox::currentTextChanged, this,
+            [refreshSessionMetadata](const QString &) {
+                refreshSessionMetadata();
+            });
+
+    connect(promptLabelEdit_, &QLineEdit::textChanged, this,
+            [refreshSessionMetadata](const QString &) {
+                refreshSessionMetadata();
+            });
 
     startNewSession();
-
     updateSessionStatus();
+}
 
+void MainWindow::syncSessionMetadataFromUi()
+{
+    currentSession_.participantId = participantIdEdit_->text().trimmed();
+    currentSession_.samplePurpose = samplePurposeCombo_->currentText().trimmed();
+    currentSession_.textMode = textModeCombo_->currentText().trimmed();
+    currentSession_.promptLabel = promptLabelEdit_->text().trimmed();
 }
 
 void MainWindow::startNewSession()
@@ -91,8 +131,7 @@ void MainWindow::startNewSession()
     currentSession_.startedAtUtc = QDateTime::currentDateTimeUtc();
     currentSession_.events.clear();
     currentSession_.ignoredAutoRepeatCount = 0;
-    currentSession_.participantId = participantIdEdit_->text().trimmed();
-
+    syncSessionMetadataFromUi();
 }
 
 void MainWindow::appendEvent(const KeystrokeEvent &event)
@@ -105,7 +144,6 @@ void MainWindow::appendEvent(const KeystrokeEvent &event)
 
     currentSession_.events.append(event);
 }
-
 
 void MainWindow::handleCapturedKeystroke(const KeystrokeEvent &event)
 {
@@ -148,6 +186,10 @@ SessionFeatureVector MainWindow::buildFeatureVector(const SessionSummary &summar
     SessionFeatureVector vector;
 
     vector.participantId = currentSession_.participantId;
+
+    vector.samplePurpose = currentSession_.samplePurpose;
+    vector.textMode = currentSession_.textMode;
+    vector.promptLabel = currentSession_.promptLabel;
 
     vector.sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
     vector.startedAtUtcIso = currentSession_.startedAtUtc.toString(Qt::ISODateWithMs);
@@ -194,23 +236,21 @@ SessionFeatureVector MainWindow::buildFeatureVector(const SessionSummary &summar
     return vector;
 }
 
-
 void MainWindow::updateSessionStatus()
 {
     const SessionSummary summary = buildSessionSummary();
     const SessionFeatureVector featureVector = buildFeatureVector(summary);
 
-
     statusBar()->showMessage(
-        QString("User: %1 | Stored: %2 | Dwell avg: %3 ms | Flight avg: %4 ms | Overlap: %5% | Repeat: %6% | Open keys: %7")
+        QString("User: %1 | Purpose: %2 | Mode: %3 | Stored: %4 | Dwell avg: %5 ms | Flight avg: %6 ms | Open keys: %7 | Repeat: %8%")
             .arg(featureVector.participantId.isEmpty() ? "-" : featureVector.participantId)
+            .arg(featureVector.samplePurpose.isEmpty() ? "-" : featureVector.samplePurpose)
+            .arg(featureVector.textMode.isEmpty() ? "-" : featureVector.textMode)
             .arg(featureVector.storedEvents)
             .arg(featureVector.averageDwellMs, 0, 'f', 2)
             .arg(featureVector.averageFlightMs, 0, 'f', 2)
-            .arg(featureVector.overlapRatio * 100.0, 0, 'f', 1)
-            .arg(featureVector.ignoredRepeatRatio * 100.0, 0, 'f', 1)
-            .arg(featureVector.keysStillPressedCount));
-
+            .arg(featureVector.keysStillPressedCount)
+            .arg(featureVector.ignoredRepeatRatio * 100.0, 0, 'f', 1));
 }
 
 void MainWindow::fillDwellStats(SessionSummary &summary) const
@@ -247,7 +287,6 @@ void MainWindow::fillDwellStats(SessionSummary &summary) const
         }
 
         const qint64 dwellNs = event.timestampNs - pressTimestampNs;
-
 
         if (dwellNs < 0)
         {
@@ -381,7 +420,7 @@ void MainWindow::saveCurrentSession()
 
     if (currentSession_.participantId.isEmpty())
     {
-        currentSession_.participantId = participantIdEdit_->text().trimmed();
+        syncSessionMetadataFromUi();
     }
 
     if (currentSession_.participantId.isEmpty())
@@ -428,6 +467,4 @@ void MainWindow::resetCurrentSession()
     updateSessionStatus();
     typingArea_->setFocus();
 }
-
-
 

@@ -13,5 +13,4 @@ QString defaultFilePath();
 bool appendRow(const QString &filePath, const SessionFeatureVector &vector);
 }
 
-
 #endif // SESSIONFEATURECSVWRITER_H

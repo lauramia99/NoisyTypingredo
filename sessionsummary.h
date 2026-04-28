@@ -23,7 +23,6 @@ struct SessionSummary
     double averageFlightMs = 0.0;
     double minFlightMs = 0.0;
     double maxFlightMs = 0.0;
-
 };
 
 #endif // SESSIONSUMMARY_H

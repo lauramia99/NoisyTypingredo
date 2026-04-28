@@ -6,9 +6,9 @@
 #include "keystrokeevent.h"
 
 #include <QDateTime>
+#include <QString>
 #include <QUuid>
 #include <QVector>
-#include <QString>
 
 struct TypingSession
 {
@@ -17,9 +17,9 @@ struct TypingSession
     QVector<KeystrokeEvent> events;
     int ignoredAutoRepeatCount = 0;
     QString participantId;
-
-
+    QString samplePurpose;
+    QString textMode;
+    QString promptLabel;
 };
-
 
 #endif // TYPINGSESSION_H

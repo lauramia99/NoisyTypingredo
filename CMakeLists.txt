@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.19)
 project(NoisyTyping LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Sql)
 
 qt_standard_project_setup()
 
@@ -20,12 +20,14 @@ qt_add_executable(NoisyTyping
     sessionfeaturecsvwriter.cpp
     sessioneventcsvwriter.h
     sessioneventcsvwriter.cpp
+    databasemanager.h databasemanager.cpp
 )
 
 target_link_libraries(NoisyTyping
     PRIVATE
         Qt::Core
         Qt::Widgets
+        Qt::Sql
 )
 
 target_compile_definitions(NoisyTyping PRIVATE

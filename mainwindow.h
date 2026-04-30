@@ -6,6 +6,8 @@
 #include "typingsession.h"
 #include "sessionsummary.h"
 #include "sessionfeaturevector.h"
+#include "databasemanager.h"
+
 
 class typingtextedit;
 class QComboBox;
@@ -42,5 +44,8 @@ private:
     QPushButton *saveSessionButton_ = nullptr;
     QPushButton *resetSessionButton_ = nullptr;
     TypingSession currentSession_;
+    DatabaseManager databaseManager_;
+
+
 };
 #endif // MAINWINDOW_H

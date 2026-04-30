@@ -118,6 +118,16 @@ MainWindow::MainWindow(QWidget *parent)
 
     startNewSession();
     updateSessionStatus();
+
+    if (!databaseManager_.open())
+    {
+        QMessageBox::warning(
+            this,
+            "Database Initialization Failed",
+            QString("Could not initialize SQLite database:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+    }
+
 }
 
 void MainWindow::syncSessionMetadataFromUi()
@@ -462,12 +472,82 @@ void MainWindow::saveCurrentSession()
         return;
     }
 
+    if (!databaseManager_.saveSession(currentSession_, summary, featureVector))
+    {
+        QMessageBox::warning(
+            this,
+            "Database Save Failed",
+            QString("Could not save session to SQLite:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+
+    SavedSessionCheck savedCheck;
+    const QString sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
+
+    if (!databaseManager_.loadSavedSessionCheck(sessionId, savedCheck))
+    {
+        QMessageBox::warning(
+            this,
+            "Database Verification Failed",
+            QString("Could not verify saved SQLite data:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    if (savedCheck.storedEventCount != currentSession_.events.size())
+    {
+        QMessageBox::warning(
+            this,
+            "Database Verification Failed",
+            QString("Saved event count mismatch.\nExpected: %1\nSaved: %2")
+                .arg(currentSession_.events.size())
+                .arg(savedCheck.storedEventCount));
+        return;
+    }
+
+    if (!savedCheck.hasFeatureRow)
+    {
+        QMessageBox::warning(
+            this,
+            "Database Verification Failed",
+            "The feature row was not found in SQLite.");
+        return;
+    }
+
+    DatabaseStats databaseStats;
+
+    if (!databaseManager_.loadDatabaseStats(databaseStats))
+    {
+        QMessageBox::warning(
+            this,
+            "Database Statistics Failed",
+            QString("Could not load SQLite statistics:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
     QMessageBox::information(
         this,
         "Session Saved",
-        QString("Feature vector saved to:\n%1\n\nRaw session saved to:\n%2")
+        QString(
+            "Feature vector saved to:\n%1\n\n"
+            "Raw session saved to:\n%2\n\n"
+            "SQLite events verified: %3\n\n"
+            "Database totals:\n"
+            "Participants: %4\n"
+            "Sessions: %5\n"
+            "Events: %6\n"
+            "Feature rows: %7")
             .arg(QDir::toNativeSeparators(featureFilePath))
-            .arg(QDir::toNativeSeparators(rawSessionFilePath)));
+            .arg(QDir::toNativeSeparators(rawSessionFilePath))
+            .arg(savedCheck.storedEventCount)
+            .arg(databaseStats.participantCount)
+            .arg(databaseStats.sessionCount)
+            .arg(databaseStats.eventCount)
+            .arg(databaseStats.featureRowCount)
+        );
 
 
     typingArea_->clear();

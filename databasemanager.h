@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include "sessionfeaturevector.h"
+
 #include <QSqlDatabase>
 #include <QString>
+#include <QVector>
 
 struct TypingSession;
 struct SessionSummary;
-struct SessionFeatureVector;
 
 struct SavedSessionCheck
 {
@@ -36,6 +38,9 @@ public:
                                SavedSessionCheck &check);
 
     bool loadDatabaseStats(DatabaseStats &stats);
+
+    bool loadTrainingFeatureVectors(const QString &participantId,
+                                    QVector<SessionFeatureVector> &features);
 
     DatabaseManager();
     ~DatabaseManager();

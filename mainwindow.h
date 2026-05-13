@@ -3,13 +3,11 @@
 
 #include <QMainWindow>
 
-#include "typingsession.h"
-#include "sessionsummary.h"
-#include "sessionfeaturevector.h"
 #include "databasemanager.h"
-
+#include "typingsession.h"
 
 class typingtextedit;
+class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QPushButton;
@@ -27,25 +25,23 @@ private:
     void handleCapturedKeystroke(const KeystrokeEvent &event);
     void appendEvent(const KeystrokeEvent &event);
 
-    SessionSummary buildSessionSummary() const;
-    SessionFeatureVector buildFeatureVector(const SessionSummary &summary) const;
-    void fillDwellStats(SessionSummary &summary) const;
-    void fillFlightStats(SessionSummary &summary) const;
     void updateSessionStatus();
 
     void saveCurrentSession();
     void resetCurrentSession();
+    void buildCurrentParticipantProfile();
 
     typingtextedit *typingArea_ = nullptr;
     QLineEdit *participantIdEdit_ = nullptr;
     QComboBox *samplePurposeCombo_ = nullptr;
     QComboBox *textModeCombo_ = nullptr;
     QLineEdit *promptLabelEdit_ = nullptr;
+    QCheckBox *consentCheckBox_ = nullptr;
     QPushButton *saveSessionButton_ = nullptr;
     QPushButton *resetSessionButton_ = nullptr;
+    QPushButton *buildProfileButton_ = nullptr;
+
     TypingSession currentSession_;
     DatabaseManager databaseManager_;
-
-
 };
 #endif // MAINWINDOW_H

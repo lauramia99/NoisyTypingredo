@@ -1,16 +1,14 @@
 #include "databasemanager.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
-#include <QDateTime>
-#include <QVariant>
 
 #include "typingsession.h"
 #include "sessionsummary.h"
-#include "sessionfeaturevector.h"
 
 namespace {
 const QString kConnectionName = QStringLiteral("noisytyping_connection");
@@ -119,7 +117,6 @@ bool DatabaseManager::initializeSchema()
         return false;
     }
 
-
     if (!query.exec(
             "CREATE TABLE IF NOT EXISTS sessions ("
             "session_id TEXT PRIMARY KEY,"
@@ -212,12 +209,10 @@ bool DatabaseManager::ensureParticipantExists(const QString &participantId)
     return true;
 }
 
-
 bool DatabaseManager::saveSession(const TypingSession &session,
                                   const SessionSummary &summary,
                                   const SessionFeatureVector &features)
 {
-
     Q_UNUSED(summary);
 
     lastErrorText_.clear();
@@ -242,7 +237,6 @@ bool DatabaseManager::saveSession(const TypingSession &session,
         return false;
     }
 
-
     QSqlQuery sessionQuery(database_);
 
     sessionQuery.prepare(
@@ -256,7 +250,6 @@ bool DatabaseManager::saveSession(const TypingSession &session,
     sessionQuery.addBindValue(session.textMode);
     sessionQuery.addBindValue(session.promptLabel);
     sessionQuery.addBindValue(session.startedAtUtc.toString(Qt::ISODateWithMs));
-
 
     if (!sessionQuery.exec())
     {
@@ -296,7 +289,6 @@ bool DatabaseManager::saveSession(const TypingSession &session,
         eventQuery.bindValue(6, event.nativeModifiers);
         eventQuery.bindValue(7, event.timestampNs);
         eventQuery.bindValue(8, event.autoRepeat ? 1 : 0);
-
 
         if (!eventQuery.exec())
         {
@@ -478,4 +470,87 @@ bool DatabaseManager::loadDatabaseStats(DatabaseStats &stats)
     return true;
 }
 
+bool DatabaseManager::loadTrainingFeatureVectors(
+    const QString &participantId,
+    QVector<SessionFeatureVector> &features)
+{
+    lastErrorText_.clear();
+    features.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    if (participantId.trimmed().isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Participant ID is empty.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "SELECT "
+        "s.participant_id, s.sample_purpose, s.text_mode, s.prompt_label, "
+        "s.session_id, s.started_at_utc, "
+        "f.stored_events, f.press_count, f.release_count, "
+        "f.ignored_auto_repeat_count, f.overlap_press_count, "
+        "f.unmatched_release_count, f.keys_still_pressed_count, "
+        "f.duration_ms, "
+        "f.average_dwell_ms, f.min_dwell_ms, f.max_dwell_ms, "
+        "f.average_flight_ms, f.min_flight_ms, f.max_flight_ms, "
+        "f.overlap_ratio, f.unmatched_release_ratio, f.ignored_repeat_ratio "
+        "FROM session_features f "
+        "JOIN sessions s ON s.session_id = f.session_id "
+        "WHERE s.participant_id = ? "
+        "AND s.sample_purpose = 'training' "
+        "ORDER BY s.started_at_utc ASC");
+
+    query.addBindValue(participantId.trimmed());
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    while (query.next())
+    {
+        SessionFeatureVector vector;
+
+        vector.participantId = query.value(0).toString();
+        vector.samplePurpose = query.value(1).toString();
+        vector.textMode = query.value(2).toString();
+        vector.promptLabel = query.value(3).toString();
+        vector.sessionId = query.value(4).toString();
+        vector.startedAtUtcIso = query.value(5).toString();
+
+        vector.storedEvents = query.value(6).toInt();
+        vector.pressCount = query.value(7).toInt();
+        vector.releaseCount = query.value(8).toInt();
+        vector.ignoredAutoRepeatCount = query.value(9).toInt();
+        vector.overlapPressCount = query.value(10).toInt();
+        vector.unmatchedReleaseCount = query.value(11).toInt();
+        vector.keysStillPressedCount = query.value(12).toInt();
+
+        vector.durationMs = query.value(13).toDouble();
+
+        vector.averageDwellMs = query.value(14).toDouble();
+        vector.minDwellMs = query.value(15).toDouble();
+        vector.maxDwellMs = query.value(16).toDouble();
+
+        vector.averageFlightMs = query.value(17).toDouble();
+        vector.minFlightMs = query.value(18).toDouble();
+        vector.maxFlightMs = query.value(19).toDouble();
+
+        vector.overlapRatio = query.value(20).toDouble();
+        vector.unmatchedReleaseRatio = query.value(21).toDouble();
+        vector.ignoredRepeatRatio = query.value(22).toDouble();
+
+        features.append(vector);
+    }
+
+    return true;
+}
 

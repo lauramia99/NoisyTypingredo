@@ -30,6 +30,7 @@ private:
     void saveCurrentSession();
     void resetCurrentSession();
     void buildCurrentParticipantProfile();
+    void verifyCurrentSession();
 
     typingtextedit *typingArea_ = nullptr;
     QLineEdit *participantIdEdit_ = nullptr;
@@ -40,6 +41,7 @@ private:
     QPushButton *saveSessionButton_ = nullptr;
     QPushButton *resetSessionButton_ = nullptr;
     QPushButton *buildProfileButton_ = nullptr;
+    QPushButton *verifySessionButton_ = nullptr;
 
     TypingSession currentSession_;
     DatabaseManager databaseManager_;

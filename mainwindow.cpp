@@ -5,7 +5,6 @@
 #include "sessioneventcsvwriter.h"
 #include "profilemodel.h"
 
-
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
@@ -34,6 +33,7 @@ MainWindow::MainWindow(QWidget *parent)
     saveSessionButton_ = new QPushButton("Save Session", centralWidget);
     resetSessionButton_ = new QPushButton("Reset Session", centralWidget);
     buildProfileButton_ = new QPushButton("Build Profile", centralWidget);
+    verifySessionButton_ = new QPushButton("Verify Session", centralWidget);
 
     auto *participantIdLabel = new QLabel("Participant ID:", centralWidget);
     participantIdEdit_ = new QLineEdit(centralWidget);
@@ -68,6 +68,7 @@ MainWindow::MainWindow(QWidget *parent)
     controlsLayout->addWidget(saveSessionButton_);
     controlsLayout->addWidget(resetSessionButton_);
     controlsLayout->addWidget(buildProfileButton_);
+    controlsLayout->addWidget(verifySessionButton_);
     controlsLayout->addStretch();
 
     typingArea_ = new typingtextedit(centralWidget);
@@ -89,6 +90,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(typingArea_, &typingtextedit::keystrokeCaptured, this,
             &MainWindow::handleCapturedKeystroke);
+
+    connect(verifySessionButton_, &QPushButton::clicked,
+            this, &MainWindow::verifyCurrentSession);
 
     const auto refreshSessionMetadata = [this]() {
         syncSessionMetadataFromUi();
@@ -381,4 +385,81 @@ void MainWindow::buildCurrentParticipantProfile()
             .arg(profile.averageFlightMsMean, 0, 'f', 2)
             .arg(profile.averageFlightMsStdDev, 0, 'f', 2));
 }
+
+void MainWindow::verifyCurrentSession()
+{
+    const QString participantId = participantIdEdit_->text().trimmed();
+
+    if (participantId.isEmpty())
+    {
+        QMessageBox::warning(this, "Missing Participant ID",
+                             "Please enter a participant ID before verification.");
+        participantIdEdit_->setFocus();
+        return;
+    }
+
+    const SessionSummary currentSummary =
+        FeatureExtractor::buildSessionSummary(currentSession_);
+
+    if (currentSummary.storedEvents == 0)
+    {
+        QMessageBox::information(this, "No Session Data",
+                                 "There is no current typing data to verify.");
+        typingArea_->setFocus();
+        return;
+    }
+
+    QVector<SessionFeatureVector> trainingSamples;
+
+    if (!databaseManager_.loadTrainingFeatureVectors(participantId, trainingSamples))
+    {
+        QMessageBox::warning(
+            this,
+            "Verification Failed",
+            QString("Could not load training samples:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    if (trainingSamples.isEmpty())
+    {
+        QMessageBox::information(
+            this,
+            "No Training Data",
+            QString("No training samples found for participant '%1'.")
+                .arg(participantId));
+        return;
+    }
+
+    const UserProfile profile =
+        ProfileModel::buildProfile(participantId, trainingSamples);
+
+    const SessionFeatureVector currentFeatures =
+        FeatureExtractor::buildFeatureVector(currentSession_, currentSummary);
+
+    const double threshold = 3.0;
+
+    const VerificationDecision decision =
+        ProfileModel::verifySample(profile, currentFeatures, threshold);
+
+    QMessageBox::information(
+        this,
+        "Verification Result",
+        QString(
+            "Participant: %1\n"
+            "Decision: %2\n\n"
+            "Total score: %3\n"
+            "Threshold: %4\n\n"
+            "Dwell deviation: %5\n"
+            "Flight deviation: %6\n\n"
+            "Training sessions: %7")
+            .arg(participantId)
+            .arg(decision.accepted ? "ACCEPTED" : "REJECTED")
+            .arg(decision.score.totalScore, 0, 'f', 3)
+            .arg(decision.threshold, 0, 'f', 3)
+            .arg(decision.score.dwellDeviation, 0, 'f', 3)
+            .arg(decision.score.flightDeviation, 0, 'f', 3)
+            .arg(profile.trainingSessionCount));
+}
+
 

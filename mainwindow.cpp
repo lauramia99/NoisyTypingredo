@@ -4,12 +4,19 @@
 #include "typingtextedit.h"
 #include "sessioneventcsvwriter.h"
 #include "profilemodel.h"
+#include "thresholdanalysis.h"
+#include "thresholdanalysiscsvwriter.h"
+#include "verificationstatscsvwriter.h"
+#include "verificationresultscsvwriter.h"
+
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
-#include <QHBoxLayout>
+#include <QDoubleSpinBox>
+#include <QGridLayout>
+#include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -25,7 +32,8 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle("NoisyTyping");
-    resize(900, 600);
+    resize(980, 720);
+    setMinimumSize(760, 560);
 
     auto *centralWidget = new QWidget(this);
     auto *layout = new QVBoxLayout(centralWidget);
@@ -34,6 +42,8 @@ MainWindow::MainWindow(QWidget *parent)
     resetSessionButton_ = new QPushButton("Reset Session", centralWidget);
     buildProfileButton_ = new QPushButton("Build Profile", centralWidget);
     verifySessionButton_ = new QPushButton("Verify Session", centralWidget);
+    verificationStatsButton_ = new QPushButton("Verification Stats", centralWidget);
+    thresholdAnalysisButton_ = new QPushButton("Threshold Analysis", centralWidget);
 
     auto *participantIdLabel = new QLabel("Participant ID:", centralWidget);
     participantIdEdit_ = new QLineEdit(centralWidget);
@@ -49,33 +59,59 @@ MainWindow::MainWindow(QWidget *parent)
     textModeCombo_->addItem("free_text");
     textModeCombo_->addItem("fixed_text");
 
+    auto *attemptTypeLabel = new QLabel("Attempt Type:", centralWidget);
+    attemptTypeCombo_ = new QComboBox(centralWidget);
+    attemptTypeCombo_->addItem("genuine");
+    attemptTypeCombo_->addItem("impostor");
+
     auto *promptLabelLabel = new QLabel("Prompt Label:", centralWidget);
     promptLabelEdit_ = new QLineEdit(centralWidget);
     promptLabelEdit_->setPlaceholderText("optional, e.g. paragraph_01");
     consentCheckBox_ = new QCheckBox("Consent confirmed", centralWidget);
     consentCheckBox_->setToolTip("Required before saving a typing sample.");
 
-    auto *controlsLayout = new QHBoxLayout();
-    controlsLayout->addWidget(participantIdLabel);
-    controlsLayout->addWidget(participantIdEdit_, 1);
-    controlsLayout->addWidget(samplePurposeLabel);
-    controlsLayout->addWidget(samplePurposeCombo_);
-    controlsLayout->addWidget(textModeLabel);
-    controlsLayout->addWidget(textModeCombo_);
-    controlsLayout->addWidget(promptLabelLabel);
-    controlsLayout->addWidget(promptLabelEdit_, 1);
-    controlsLayout->addWidget(consentCheckBox_);
-    controlsLayout->addWidget(saveSessionButton_);
-    controlsLayout->addWidget(resetSessionButton_);
-    controlsLayout->addWidget(buildProfileButton_);
-    controlsLayout->addWidget(verifySessionButton_);
-    controlsLayout->addStretch();
+    auto *thresholdLabel = new QLabel("Threshold:", centralWidget);
+    verificationThresholdSpinBox_ = new QDoubleSpinBox(centralWidget);
+    verificationThresholdSpinBox_->setRange(0.0, 100.0);
+    verificationThresholdSpinBox_->setDecimals(2);
+    verificationThresholdSpinBox_->setSingleStep(0.25);
+    verificationThresholdSpinBox_->setValue(3.0);
+    verificationThresholdSpinBox_->setToolTip("Verification threshold. Lower is stricter.");
+
+    auto *sessionGroup = new QGroupBox("Session metadata", centralWidget);
+    auto *sessionLayout = new QGridLayout(sessionGroup);
+    sessionLayout->addWidget(participantIdLabel, 0, 0);
+    sessionLayout->addWidget(participantIdEdit_, 0, 1);
+    sessionLayout->addWidget(samplePurposeLabel, 0, 2);
+    sessionLayout->addWidget(samplePurposeCombo_, 0, 3);
+    sessionLayout->addWidget(textModeLabel, 1, 0);
+    sessionLayout->addWidget(textModeCombo_, 1, 1);
+    sessionLayout->addWidget(attemptTypeLabel, 1, 2);
+    sessionLayout->addWidget(attemptTypeCombo_, 1, 3);
+    sessionLayout->addWidget(promptLabelLabel, 2, 0);
+    sessionLayout->addWidget(promptLabelEdit_, 2, 1, 1, 3);
+    sessionLayout->setColumnStretch(1, 1);
+    sessionLayout->setColumnStretch(3, 1);
+
+    auto *actionsGroup = new QGroupBox("Controls", centralWidget);
+    auto *actionsLayout = new QGridLayout(actionsGroup);
+    actionsLayout->addWidget(consentCheckBox_, 0, 0);
+    actionsLayout->addWidget(thresholdLabel, 0, 1);
+    actionsLayout->addWidget(verificationThresholdSpinBox_, 0, 2);
+    actionsLayout->addWidget(saveSessionButton_, 1, 0);
+    actionsLayout->addWidget(resetSessionButton_, 1, 1);
+    actionsLayout->addWidget(buildProfileButton_, 1, 2);
+    actionsLayout->addWidget(verifySessionButton_, 1, 3);
+    actionsLayout->addWidget(verificationStatsButton_, 2, 0, 1, 2);
+    actionsLayout->addWidget(thresholdAnalysisButton_, 2, 2, 1, 2);
+    actionsLayout->setColumnStretch(4, 1);
 
     typingArea_ = new typingtextedit(centralWidget);
     typingArea_->setPlaceholderText("Start typing...");
 
-    layout->addLayout(controlsLayout);
-    layout->addWidget(typingArea_);
+    layout->addWidget(sessionGroup);
+    layout->addWidget(actionsGroup);
+    layout->addWidget(typingArea_, 1);
 
     setCentralWidget(centralWidget);
 
@@ -93,6 +129,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(verifySessionButton_, &QPushButton::clicked,
             this, &MainWindow::verifyCurrentSession);
+
+    connect(verificationStatsButton_, &QPushButton::clicked,
+            this, &MainWindow::showVerificationStats);
+
+    connect(thresholdAnalysisButton_, &QPushButton::clicked,
+            this, &MainWindow::analyzeThresholds);
 
     const auto refreshSessionMetadata = [this]() {
         syncSessionMetadataFromUi();
@@ -300,14 +342,16 @@ void MainWindow::saveCurrentSession()
         QString(
             "Feature vector saved to:\n%1\n\n"
             "Raw session saved to:\n%2\n\n"
-            "SQLite events verified: %3\n\n"
+            "SQLite database:\n%3\n\n"
+            "SQLite events verified: %4\n\n"
             "Database totals:\n"
-            "Participants: %4\n"
-            "Sessions: %5\n"
-            "Events: %6\n"
-            "Feature rows: %7")
+            "Participants: %5\n"
+            "Sessions: %6\n"
+            "Events: %7\n"
+            "Feature rows: %8")
             .arg(QDir::toNativeSeparators(featureFilePath))
             .arg(QDir::toNativeSeparators(rawSessionFilePath))
+            .arg(QDir::toNativeSeparators(databaseManager_.databaseFilePath()))
             .arg(savedCheck.storedEventCount)
             .arg(databaseStats.participantCount)
             .arg(databaseStats.sessionCount)
@@ -437,24 +481,48 @@ void MainWindow::verifyCurrentSession()
     const SessionFeatureVector currentFeatures =
         FeatureExtractor::buildFeatureVector(currentSession_, currentSummary);
 
-    const double threshold = 3.0;
+    const double threshold = verificationThresholdSpinBox_->value();
 
     const VerificationDecision decision =
         ProfileModel::verifySample(profile, currentFeatures, threshold);
+
+    VerificationResultRecord result;
+    result.sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
+    result.participantId = participantId;
+    result.attemptType = attemptTypeCombo_->currentText();
+    result.totalScore = decision.score.totalScore;
+    result.dwellDeviation = decision.score.dwellDeviation;
+    result.flightDeviation = decision.score.flightDeviation;
+    result.threshold = decision.threshold;
+    result.accepted = decision.accepted;
+    result.trainingSessionCount = profile.trainingSessionCount;
+
+    if (!databaseManager_.saveVerificationResult(result))
+    {
+        QMessageBox::warning(
+            this,
+            "Verification Save Failed",
+            QString("Could not save verification result:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
 
     QMessageBox::information(
         this,
         "Verification Result",
         QString(
             "Participant: %1\n"
-            "Decision: %2\n\n"
-            "Total score: %3\n"
-            "Threshold: %4\n\n"
-            "Dwell deviation: %5\n"
-            "Flight deviation: %6\n\n"
-            "Training sessions: %7")
+            "Decision: %2\n"
+            "Attempt type: %3\n\n"
+            "Total score: %4\n"
+            "Threshold: %5\n\n"
+            "Dwell deviation: %6\n"
+            "Flight deviation: %7\n\n"
+            "Training sessions: %8\n\n"
+            "Verification result saved to SQLite.")
             .arg(participantId)
             .arg(decision.accepted ? "ACCEPTED" : "REJECTED")
+            .arg(attemptTypeCombo_->currentText())
             .arg(decision.score.totalScore, 0, 'f', 3)
             .arg(decision.threshold, 0, 'f', 3)
             .arg(decision.score.dwellDeviation, 0, 'f', 3)
@@ -462,4 +530,204 @@ void MainWindow::verifyCurrentSession()
             .arg(profile.trainingSessionCount));
 }
 
+void MainWindow::showVerificationStats()
+{
+    const QString participantId = participantIdEdit_->text().trimmed();
 
+    if (participantId.isEmpty())
+    {
+        QMessageBox::warning(this, "Missing Participant ID",
+                             "Please enter a participant ID before loading verification statistics.");
+        participantIdEdit_->setFocus();
+        return;
+    }
+
+    VerificationStats stats;
+
+    if (!databaseManager_.loadVerificationStats(participantId, stats))
+    {
+        QMessageBox::warning(
+            this,
+            "Verification Statistics Failed",
+            QString("Could not load verification statistics:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    if (stats.totalCount == 0)
+    {
+        QMessageBox::information(
+            this,
+            "No Verification Data",
+            QString("No verification results found for participant '%1'.")
+                .arg(participantId));
+        return;
+    }
+
+    const QString statsFilePath =
+        VerificationStatsCsvWriter::defaultFilePath();
+
+    if (!VerificationStatsCsvWriter::appendRow(statsFilePath, participantId, stats))
+    {
+        QMessageBox::warning(this, "Statistics Export Failed",
+                             "Could not append verification statistics CSV file.");
+        return;
+    }
+
+    QVector<VerificationResultExportRow> resultRows;
+
+    if (!databaseManager_.loadVerificationResultRows(participantId, resultRows))
+    {
+        QMessageBox::warning(
+            this,
+            "Verification Export Failed",
+            QString("Could not load verification result rows:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    const QString resultsFilePath =
+        VerificationResultsCsvWriter::defaultFilePath();
+
+    if (!VerificationResultsCsvWriter::writeRows(resultsFilePath, resultRows))
+    {
+        QMessageBox::warning(this, "Verification Export Failed",
+                             "Could not write verification results CSV file.");
+        return;
+    }
+
+    QMessageBox::information(
+        this,
+        "Verification Statistics",
+        QString(
+            "Participant: %1\n\n"
+            "Total verifications: %2\n"
+            "Accepted: %3\n"
+            "Rejected: %4\n\n"
+            "Genuine attempts: %5\n"
+            "Genuine accepted: %6\n"
+            "Genuine rejected: %7\n"
+            "FRR: %8%\n\n"
+            "Impostor attempts: %9\n"
+            "Impostor accepted: %10\n"
+            "Impostor rejected: %11\n"
+            "FAR: %12%\n\n"
+            "Confusion matrix:\n"
+            "True accept: %6\n"
+            "False reject: %7\n"
+            "False accept: %10\n"
+            "True reject: %11\n\n"
+            "Average score: %13\n"
+            "Min score: %14\n"
+            "Max score: %15"
+            "\n\nExported to:\n%16\n\n"
+            "Verification rows exported to:\n%17")
+            .arg(participantId)
+            .arg(stats.totalCount)
+            .arg(stats.acceptedCount)
+            .arg(stats.rejectedCount)
+            .arg(stats.genuineCount)
+            .arg(stats.genuineAcceptedCount)
+            .arg(stats.genuineRejectedCount)
+            .arg(stats.falseRejectRate * 100.0, 0, 'f', 2)
+            .arg(stats.impostorCount)
+            .arg(stats.impostorAcceptedCount)
+            .arg(stats.impostorRejectedCount)
+            .arg(stats.falseAcceptRate * 100.0, 0, 'f', 2)
+            .arg(stats.averageTotalScore, 0, 'f', 3)
+            .arg(stats.minTotalScore, 0, 'f', 3)
+            .arg(stats.maxTotalScore, 0, 'f', 3)
+            .arg(QDir::toNativeSeparators(statsFilePath))
+            .arg(QDir::toNativeSeparators(resultsFilePath)));
+}
+
+void MainWindow::analyzeThresholds()
+{
+    const QString participantId = participantIdEdit_->text().trimmed();
+
+    if (participantId.isEmpty())
+    {
+        QMessageBox::warning(this, "Missing Participant ID",
+                             "Please enter a participant ID before running threshold analysis.");
+        participantIdEdit_->setFocus();
+        return;
+    }
+
+    QVector<VerificationResultExportRow> resultRows;
+
+    if (!databaseManager_.loadVerificationResultRows(participantId, resultRows))
+    {
+        QMessageBox::warning(
+            this,
+            "Threshold Analysis Failed",
+            QString("Could not load verification result rows:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    if (resultRows.isEmpty())
+    {
+        QMessageBox::information(
+            this,
+            "No Verification Data",
+            QString("No verification results found for participant '%1'.")
+                .arg(participantId));
+        return;
+    }
+
+    const ThresholdAnalysisResult analysis =
+        ThresholdAnalysis::buildDefaultAnalysis(resultRows);
+
+    if (analysis.genuineCount == 0 || analysis.impostorCount == 0)
+    {
+        QMessageBox::information(
+            this,
+            "Threshold Analysis Needs More Data",
+            QString(
+                "Threshold analysis needs both genuine and impostor attempts.\n\n"
+                "Current data for participant '%1':\n"
+                "Genuine attempts: %2\n"
+                "Impostor attempts: %3")
+                .arg(participantId)
+                .arg(analysis.genuineCount)
+                .arg(analysis.impostorCount));
+        return;
+    }
+
+    const QString filePath =
+        ThresholdAnalysisCsvWriter::defaultFilePath();
+
+    if (!ThresholdAnalysisCsvWriter::writeRows(filePath, participantId, analysis.rows))
+    {
+        QMessageBox::warning(this, "Threshold Export Failed",
+                             "Could not write threshold analysis CSV file.");
+        return;
+    }
+
+    verificationThresholdSpinBox_->setValue(analysis.bestRow.threshold);
+
+    QMessageBox::information(
+        this,
+        "Threshold Analysis",
+        QString(
+            "Participant: %1\n\n"
+            "Recommended threshold: %2\n"
+            "FAR: %3%\n"
+            "FRR: %4%\n"
+            "Balanced error: %5%\n"
+            "FAR/FRR gap: %6%\n\n"
+            "Samples used:\n"
+            "Genuine attempts: %7\n"
+            "Impostor attempts: %8\n\n"
+            "The Threshold control was updated to the recommended value.\n\n"
+            "Exported to:\n%9")
+            .arg(participantId)
+            .arg(analysis.bestRow.threshold, 0, 'f', 2)
+            .arg(analysis.bestRow.falseAcceptRate * 100.0, 0, 'f', 2)
+            .arg(analysis.bestRow.falseRejectRate * 100.0, 0, 'f', 2)
+            .arg(analysis.bestRow.balancedErrorRate * 100.0, 0, 'f', 2)
+            .arg(analysis.bestRow.absoluteRateGap * 100.0, 0, 'f', 2)
+            .arg(analysis.genuineCount)
+            .arg(analysis.impostorCount)
+            .arg(QDir::toNativeSeparators(filePath)));
+}

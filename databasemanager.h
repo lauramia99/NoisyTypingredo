@@ -26,6 +26,57 @@ struct DatabaseStats
     int featureRowCount = 0;
 };
 
+struct VerificationResultRecord
+{
+    QString sessionId;
+    QString participantId;
+    QString attemptType;
+    double totalScore = 0.0;
+    double dwellDeviation = 0.0;
+    double flightDeviation = 0.0;
+    double threshold = 0.0;
+    bool accepted = false;
+    int trainingSessionCount = 0;
+};
+
+struct VerificationStats
+{
+    int totalCount = 0;
+    int acceptedCount = 0;
+    int rejectedCount = 0;
+
+    double averageTotalScore = 0.0;
+    double minTotalScore = 0.0;
+    double maxTotalScore = 0.0;
+
+    int genuineCount = 0;
+    int genuineAcceptedCount = 0;
+    int genuineRejectedCount = 0;
+
+    int impostorCount = 0;
+    int impostorAcceptedCount = 0;
+    int impostorRejectedCount = 0;
+
+    double falseAcceptRate = 0.0;
+    double falseRejectRate = 0.0;
+
+};
+
+struct VerificationResultExportRow
+{
+    QString participantId;
+    QString sessionId;
+    QString attemptType;
+    QString createdAtUtc;
+    bool accepted = false;
+    double threshold = 0.0;
+    double totalScore = 0.0;
+    double dwellDeviation = 0.0;
+    double flightDeviation = 0.0;
+    int trainingSessionCount = 0;
+};
+
+
 class DatabaseManager
 {
 public:
@@ -41,6 +92,14 @@ public:
 
     bool loadTrainingFeatureVectors(const QString &participantId,
                                     QVector<SessionFeatureVector> &features);
+
+    bool saveVerificationResult(const VerificationResultRecord &result);
+
+    bool loadVerificationStats(const QString &participantId,
+                               VerificationStats &stats);
+
+    bool loadVerificationResultRows(const QString &participantId,
+                                    QVector<VerificationResultExportRow> &rows);
 
     DatabaseManager();
     ~DatabaseManager();

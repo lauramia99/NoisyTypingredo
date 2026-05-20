@@ -11,6 +11,7 @@ class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QPushButton;
+class QDoubleSpinBox;
 
 class MainWindow : public QMainWindow
 {
@@ -31,17 +32,23 @@ private:
     void resetCurrentSession();
     void buildCurrentParticipantProfile();
     void verifyCurrentSession();
+    void showVerificationStats();
+    void analyzeThresholds();
 
     typingtextedit *typingArea_ = nullptr;
     QLineEdit *participantIdEdit_ = nullptr;
     QComboBox *samplePurposeCombo_ = nullptr;
     QComboBox *textModeCombo_ = nullptr;
+    QComboBox *attemptTypeCombo_ = nullptr;
     QLineEdit *promptLabelEdit_ = nullptr;
     QCheckBox *consentCheckBox_ = nullptr;
     QPushButton *saveSessionButton_ = nullptr;
     QPushButton *resetSessionButton_ = nullptr;
     QPushButton *buildProfileButton_ = nullptr;
     QPushButton *verifySessionButton_ = nullptr;
+    QPushButton *verificationStatsButton_ = nullptr;
+    QPushButton *thresholdAnalysisButton_ = nullptr;
+    QDoubleSpinBox *verificationThresholdSpinBox_ = nullptr;
 
     TypingSession currentSession_;
     DatabaseManager databaseManager_;

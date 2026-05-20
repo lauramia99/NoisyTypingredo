@@ -23,6 +23,10 @@ qt_add_executable(NoisyTyping
     databasemanager.h databasemanager.cpp
     featureextractor.h featureextractor.cpp
     profilemodel.h profilemodel.cpp
+    verificationstatscsvwriter.h verificationstatscsvwriter.cpp
+    verificationresultscsvwriter.h verificationresultscsvwriter.cpp
+    thresholdanalysis.h thresholdanalysis.cpp
+    thresholdanalysiscsvwriter.h thresholdanalysiscsvwriter.cpp
 )
 
 target_link_libraries(NoisyTyping
@@ -92,4 +96,23 @@ add_test(
     COMMAND ProfileModelTest
 )
 
+qt_add_executable(ThresholdAnalysisTest
+    tests/thresholdanalysistest.cpp
+    thresholdanalysis.h
+    thresholdanalysis.cpp
+    databasemanager.h
+    sessionfeaturevector.h
+)
+
+target_link_libraries(ThresholdAnalysisTest
+    PRIVATE
+        Qt::Core
+        Qt::Sql
+        Qt::Test
+)
+
+add_test(
+    NAME ThresholdAnalysisTest
+    COMMAND ThresholdAnalysisTest
+)
 

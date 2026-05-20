@@ -178,6 +178,28 @@ bool DatabaseManager::initializeSchema()
         return false;
     }
 
+    if (!query.exec(
+            "CREATE TABLE IF NOT EXISTS verification_results ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "session_id TEXT NOT NULL,"
+            "participant_id TEXT NOT NULL,"
+            "created_at_utc TEXT NOT NULL,"
+            "total_score REAL NOT NULL,"
+            "dwell_deviation REAL NOT NULL,"
+            "flight_deviation REAL NOT NULL,"
+            "threshold_value REAL NOT NULL,"
+            "accepted INTEGER NOT NULL,"
+            "training_session_count INTEGER NOT NULL,"
+            "attempt_type TEXT NOT NULL,"
+            "FOREIGN KEY(session_id) REFERENCES sessions(session_id),"
+            "FOREIGN KEY(participant_id) REFERENCES participants(participant_id)"
+            ")"))
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+
     return true;
 }
 
@@ -549,6 +571,204 @@ bool DatabaseManager::loadTrainingFeatureVectors(
         vector.ignoredRepeatRatio = query.value(22).toDouble();
 
         features.append(vector);
+    }
+
+    return true;
+}
+
+bool DatabaseManager::saveVerificationResult(const VerificationResultRecord &result)
+{
+    lastErrorText_.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "INSERT INTO verification_results "
+        "(session_id, participant_id, attempt_type, created_at_utc, total_score, "
+        "dwell_deviation, flight_deviation, threshold_value, accepted, "
+        "training_session_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+
+    query.addBindValue(result.sessionId);
+    query.addBindValue(result.participantId);
+    query.addBindValue(result.attemptType);
+    query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    query.addBindValue(result.totalScore);
+    query.addBindValue(result.dwellDeviation);
+    query.addBindValue(result.flightDeviation);
+    query.addBindValue(result.threshold);
+    query.addBindValue(result.accepted ? 1 : 0);
+    query.addBindValue(result.trainingSessionCount);
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    return true;
+}
+
+bool DatabaseManager::loadVerificationStats(const QString &participantId,
+                                            VerificationStats &stats)
+{
+    lastErrorText_.clear();
+    stats = VerificationStats{};
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    if (participantId.trimmed().isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Participant ID is empty.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "SELECT "
+        "COUNT(*), "
+        "SUM(CASE WHEN accepted = 1 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN accepted = 0 THEN 1 ELSE 0 END), "
+        "AVG(total_score), "
+        "MIN(total_score), "
+        "MAX(total_score) "
+        "FROM verification_results "
+        "WHERE participant_id = ?");
+
+    query.addBindValue(participantId.trimmed());
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    if (!query.next())
+    {
+        lastErrorText_ = QStringLiteral("Could not read verification statistics.");
+        return false;
+    }
+
+    stats.totalCount = query.value(0).toInt();
+    stats.acceptedCount = query.value(1).toInt();
+    stats.rejectedCount = query.value(2).toInt();
+
+    if (stats.totalCount > 0)
+    {
+        stats.averageTotalScore = query.value(3).toDouble();
+        stats.minTotalScore = query.value(4).toDouble();
+        stats.maxTotalScore = query.value(5).toDouble();
+    }
+
+    QSqlQuery detailQuery(database_);
+    detailQuery.prepare(
+        "SELECT "
+        "SUM(CASE WHEN attempt_type = 'genuine' THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN attempt_type = 'genuine' AND accepted = 1 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN attempt_type = 'genuine' AND accepted = 0 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN attempt_type = 'impostor' THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN attempt_type = 'impostor' AND accepted = 1 THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN attempt_type = 'impostor' AND accepted = 0 THEN 1 ELSE 0 END) "
+        "FROM verification_results "
+        "WHERE participant_id = ?");
+
+    detailQuery.addBindValue(participantId.trimmed());
+
+    if (!detailQuery.exec())
+    {
+        lastErrorText_ = detailQuery.lastError().text();
+        return false;
+    }
+
+    if (!detailQuery.next())
+    {
+        lastErrorText_ = QStringLiteral("Could not read FAR/FRR statistics.");
+        return false;
+    }
+
+    stats.genuineCount = detailQuery.value(0).toInt();
+    stats.genuineAcceptedCount = detailQuery.value(1).toInt();
+    stats.genuineRejectedCount = detailQuery.value(2).toInt();
+
+    stats.impostorCount = detailQuery.value(3).toInt();
+    stats.impostorAcceptedCount = detailQuery.value(4).toInt();
+    stats.impostorRejectedCount = detailQuery.value(5).toInt();
+
+    if (stats.impostorCount > 0)
+    {
+        stats.falseAcceptRate =
+            static_cast<double>(stats.impostorAcceptedCount) / stats.impostorCount;
+    }
+
+    if (stats.genuineCount > 0)
+    {
+        stats.falseRejectRate =
+            static_cast<double>(stats.genuineRejectedCount) / stats.genuineCount;
+    }
+
+    return true;
+}
+
+bool DatabaseManager::loadVerificationResultRows(
+    const QString &participantId,
+    QVector<VerificationResultExportRow> &rows)
+{
+    lastErrorText_.clear();
+    rows.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    if (participantId.trimmed().isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Participant ID is empty.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "SELECT participant_id, session_id, attempt_type, created_at_utc, "
+        "accepted, threshold_value, total_score, dwell_deviation, "
+        "flight_deviation, training_session_count "
+        "FROM verification_results "
+        "WHERE participant_id = ? "
+        "ORDER BY created_at_utc ASC");
+
+    query.addBindValue(participantId.trimmed());
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    while (query.next())
+    {
+        VerificationResultExportRow row;
+        row.participantId = query.value(0).toString();
+        row.sessionId = query.value(1).toString();
+        row.attemptType = query.value(2).toString();
+        row.createdAtUtc = query.value(3).toString();
+        row.accepted = query.value(4).toInt() != 0;
+        row.threshold = query.value(5).toDouble();
+        row.totalScore = query.value(6).toDouble();
+        row.dwellDeviation = query.value(7).toDouble();
+        row.flightDeviation = query.value(8).toDouble();
+        row.trainingSessionCount = query.value(9).toInt();
+
+        rows.append(row);
     }
 
     return true;

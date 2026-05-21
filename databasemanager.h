@@ -1,12 +1,11 @@
 #ifndef DATABASEMANAGER_H
 #define DATABASEMANAGER_H
 
-#pragma once
-
 #include "sessionfeaturevector.h"
 
 #include <QSqlDatabase>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 struct TypingSession;
@@ -24,6 +23,21 @@ struct DatabaseStats
     int sessionCount = 0;
     int eventCount = 0;
     int featureRowCount = 0;
+};
+
+struct EnrollmentPromptStatus
+{
+    QString promptLabel;
+    int requiredCount = 0;
+    int completedCount = 0;
+};
+
+struct EnrollmentStatus
+{
+    QVector<EnrollmentPromptStatus> prompts;
+    int requiredTotal = 0;
+    int completedTotal = 0;
+    bool isComplete = false;
 };
 
 struct VerificationResultRecord
@@ -59,7 +73,6 @@ struct VerificationStats
 
     double falseAcceptRate = 0.0;
     double falseRejectRate = 0.0;
-
 };
 
 struct VerificationResultExportRow
@@ -76,11 +89,9 @@ struct VerificationResultExportRow
     int trainingSessionCount = 0;
 };
 
-
 class DatabaseManager
 {
 public:
-
     bool saveSession(const TypingSession &session,
                      const SessionSummary &summary,
                      const SessionFeatureVector &features);
@@ -101,6 +112,11 @@ public:
     bool loadVerificationResultRows(const QString &participantId,
                                     QVector<VerificationResultExportRow> &rows);
 
+    bool loadParticipantIds(QStringList &participantIds);
+
+    bool loadEnrollmentStatus(const QString &participantId,
+                              EnrollmentStatus &status);
+
     DatabaseManager();
     ~DatabaseManager();
 
@@ -118,6 +134,5 @@ private:
     QSqlDatabase database_;
     QString lastErrorText_;
 };
-
 
 #endif // DATABASEMANAGER_H

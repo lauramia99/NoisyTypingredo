@@ -1,17 +1,19 @@
-#include "featureextractor.h"
 #include "mainwindow.h"
-#include "sessionfeaturecsvwriter.h"
-#include "typingtextedit.h"
-#include "sessioneventcsvwriter.h"
+
+#include "featureextractor.h"
 #include "profilemodel.h"
+#include "promptlibrary.h"
+#include "sessioneventcsvwriter.h"
+#include "sessionfeaturecsvwriter.h"
 #include "thresholdanalysis.h"
 #include "thresholdanalysiscsvwriter.h"
-#include "verificationstatscsvwriter.h"
+#include "typingtextedit.h"
 #include "verificationresultscsvwriter.h"
-
+#include "verificationstatscsvwriter.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDateTime>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -20,13 +22,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QString>
+#include <QStringList>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QWidget>
-
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -44,10 +48,20 @@ MainWindow::MainWindow(QWidget *parent)
     verifySessionButton_ = new QPushButton("Verify Session", centralWidget);
     verificationStatsButton_ = new QPushButton("Verification Stats", centralWidget);
     thresholdAnalysisButton_ = new QPushButton("Threshold Analysis", centralWidget);
+    startEnrollmentButton_ = new QPushButton("Start Enrollment", centralWidget);
+    saveAndNextEnrollmentButton_ = new QPushButton("Save && Next", centralWidget);
+    saveAndNextEnrollmentButton_->setEnabled(false);
 
     auto *participantIdLabel = new QLabel("Participant ID:", centralWidget);
-    participantIdEdit_ = new QLineEdit(centralWidget);
-    participantIdEdit_->setPlaceholderText("e.g. user_01");
+    participantIdCombo_ = new QComboBox(centralWidget);
+    participantIdCombo_->setEditable(true);
+    participantIdCombo_->setInsertPolicy(QComboBox::NoInsert);
+    participantIdCombo_->setMaxVisibleItems(12);
+    participantIdCombo_->lineEdit()->setPlaceholderText("select or type participant ID");
+
+    participantIdCombo_->completer()->setCompletionMode(QCompleter::PopupCompletion);
+    participantIdCombo_->completer()->setFilterMode(Qt::MatchContains);
+    participantIdCombo_->completer()->setCaseSensitivity(Qt::CaseInsensitive);
 
     auto *samplePurposeLabel = new QLabel("Sample Purpose:", centralWidget);
     samplePurposeCombo_ = new QComboBox(centralWidget);
@@ -66,9 +80,23 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *promptLabelLabel = new QLabel("Prompt Label:", centralWidget);
     promptLabelEdit_ = new QLineEdit(centralWidget);
-    promptLabelEdit_->setPlaceholderText("optional, e.g. paragraph_01");
+    promptLabelEdit_->setReadOnly(true);
+
+    auto *promptSelectorLabel = new QLabel("Prompt:", centralWidget);
+    promptCombo_ = new QComboBox(centralWidget);
+
+    promptDisplay_ = new QPlainTextEdit(centralWidget);
+    promptDisplay_->setReadOnly(true);
+    promptDisplay_->setMaximumHeight(90);
+
     consentCheckBox_ = new QCheckBox("Consent confirmed", centralWidget);
     consentCheckBox_->setToolTip("Required before saving a typing sample.");
+
+    enrollmentStatusLabel_ = new QLabel("Enrollment: select or enter participant", centralWidget);
+    enrollmentStatusLabel_->setWordWrap(true);
+
+    enrollmentProgressLabel_ = new QLabel("Enrollment flow: not started", centralWidget);
+    enrollmentProgressLabel_->setWordWrap(true);
 
     auto *thresholdLabel = new QLabel("Threshold:", centralWidget);
     verificationThresholdSpinBox_ = new QDoubleSpinBox(centralWidget);
@@ -81,15 +109,20 @@ MainWindow::MainWindow(QWidget *parent)
     auto *sessionGroup = new QGroupBox("Session metadata", centralWidget);
     auto *sessionLayout = new QGridLayout(sessionGroup);
     sessionLayout->addWidget(participantIdLabel, 0, 0);
-    sessionLayout->addWidget(participantIdEdit_, 0, 1);
+    sessionLayout->addWidget(participantIdCombo_, 0, 1);
     sessionLayout->addWidget(samplePurposeLabel, 0, 2);
     sessionLayout->addWidget(samplePurposeCombo_, 0, 3);
     sessionLayout->addWidget(textModeLabel, 1, 0);
     sessionLayout->addWidget(textModeCombo_, 1, 1);
     sessionLayout->addWidget(attemptTypeLabel, 1, 2);
     sessionLayout->addWidget(attemptTypeCombo_, 1, 3);
-    sessionLayout->addWidget(promptLabelLabel, 2, 0);
-    sessionLayout->addWidget(promptLabelEdit_, 2, 1, 1, 3);
+    sessionLayout->addWidget(promptSelectorLabel, 2, 0);
+    sessionLayout->addWidget(promptCombo_, 2, 1);
+    sessionLayout->addWidget(promptLabelLabel, 2, 2);
+    sessionLayout->addWidget(promptLabelEdit_, 2, 3);
+    sessionLayout->addWidget(promptDisplay_, 3, 0, 1, 4);
+    sessionLayout->addWidget(enrollmentStatusLabel_, 4, 0, 1, 4);
+    sessionLayout->addWidget(enrollmentProgressLabel_, 5, 0, 1, 4);
     sessionLayout->setColumnStretch(1, 1);
     sessionLayout->setColumnStretch(3, 1);
 
@@ -104,10 +137,12 @@ MainWindow::MainWindow(QWidget *parent)
     actionsLayout->addWidget(verifySessionButton_, 1, 3);
     actionsLayout->addWidget(verificationStatsButton_, 2, 0, 1, 2);
     actionsLayout->addWidget(thresholdAnalysisButton_, 2, 2, 1, 2);
+    actionsLayout->addWidget(startEnrollmentButton_, 3, 0, 1, 2);
+    actionsLayout->addWidget(saveAndNextEnrollmentButton_, 3, 2, 1, 2);
     actionsLayout->setColumnStretch(4, 1);
 
     typingArea_ = new typingtextedit(centralWidget);
-    typingArea_->setPlaceholderText("Start typing...");
+    typingArea_->setPlaceholderText("Type the selected prompt here...");
 
     layout->addWidget(sessionGroup);
     layout->addWidget(actionsGroup);
@@ -136,14 +171,21 @@ MainWindow::MainWindow(QWidget *parent)
     connect(thresholdAnalysisButton_, &QPushButton::clicked,
             this, &MainWindow::analyzeThresholds);
 
+    connect(startEnrollmentButton_, &QPushButton::clicked,
+        this, &MainWindow::startEnrollment);
+
+    connect(saveAndNextEnrollmentButton_, &QPushButton::clicked,
+        this, &MainWindow::saveEnrollmentStep);
+
     const auto refreshSessionMetadata = [this]() {
         syncSessionMetadataFromUi();
         updateSessionStatus();
     };
 
-    connect(participantIdEdit_, &QLineEdit::textChanged, this,
-            [refreshSessionMetadata](const QString &) {
+    connect(participantIdCombo_, &QComboBox::currentTextChanged, this,
+            [this, refreshSessionMetadata](const QString &) {
                 refreshSessionMetadata();
+                updateEnrollmentStatus();
             });
 
     connect(samplePurposeCombo_, &QComboBox::currentTextChanged, this,
@@ -156,13 +198,14 @@ MainWindow::MainWindow(QWidget *parent)
                 refreshSessionMetadata();
             });
 
-    connect(promptLabelEdit_, &QLineEdit::textChanged, this,
-            [refreshSessionMetadata](const QString &) {
+    connect(promptCombo_, &QComboBox::currentTextChanged, this,
+            [this, refreshSessionMetadata](const QString &) {
+                updatePromptSelection();
                 refreshSessionMetadata();
             });
 
-    startNewSession();
-    updateSessionStatus();
+    populatePromptSelector();
+    updatePromptSelection();
 
     if (!databaseManager_.open())
     {
@@ -172,11 +215,158 @@ MainWindow::MainWindow(QWidget *parent)
             QString("Could not initialize SQLite database:\n%1")
                 .arg(databaseManager_.lastErrorText()));
     }
+    else
+    {
+        refreshParticipantList();
+    }
+
+    startNewSession();
+    updateSessionStatus();
+    updateEnrollmentStatus();
+    updateEnrollmentControls();
+}
+
+QString MainWindow::currentParticipantId() const
+{
+    return participantIdCombo_->currentText().trimmed();
+}
+
+void MainWindow::refreshParticipantList()
+{
+    QStringList participantIds;
+
+    if (!databaseManager_.loadParticipantIds(participantIds))
+    {
+        return;
+    }
+
+    const QString selectedParticipantId = currentParticipantId();
+    const QSignalBlocker blocker(participantIdCombo_);
+
+    participantIdCombo_->clear();
+    participantIdCombo_->addItems(participantIds);
+    participantIdCombo_->setCurrentText(selectedParticipantId);
+}
+
+void MainWindow::populatePromptSelector()
+{
+    promptCombo_->clear();
+
+    const QVector<PromptDefinition> prompts =
+        PromptLibrary::fixedTextPrompts();
+
+    for (const PromptDefinition &prompt : prompts)
+    {
+        promptCombo_->addItem(prompt.title, prompt.label);
+    }
+}
+
+void MainWindow::updatePromptSelection()
+{
+    const QString promptLabel =
+        promptCombo_->currentData().toString();
+
+    const PromptDefinition prompt =
+        PromptLibrary::promptByLabel(promptLabel);
+
+    promptLabelEdit_->setText(prompt.label);
+    promptDisplay_->setPlainText(prompt.text);
+
+    textModeCombo_->setCurrentText("fixed_text");
+}
+
+void MainWindow::updateEnrollmentStatus()
+{
+    const QString participantId = currentParticipantId();
+
+    if (participantId.isEmpty())
+    {
+        enrollmentStatusLabel_->setText("Enrollment: select or enter participant");
+        return;
+    }
+
+    EnrollmentStatus status;
+
+    if (!databaseManager_.loadEnrollmentStatus(participantId, status))
+    {
+        enrollmentStatusLabel_->setText("Enrollment: unavailable");
+        return;
+    }
+
+    QStringList promptParts;
+
+    for (const EnrollmentPromptStatus &promptStatus : status.prompts)
+    {
+        const int shownCompleted =
+            promptStatus.completedCount > promptStatus.requiredCount
+                ? promptStatus.requiredCount
+                : promptStatus.completedCount;
+
+        promptParts << QString("%1 %2/%3")
+                           .arg(promptStatus.promptLabel)
+                           .arg(shownCompleted)
+                           .arg(promptStatus.requiredCount);
+    }
+
+    enrollmentStatusLabel_->setText(
+        QString("Enrollment: %1/%2 %3 | %4")
+            .arg(status.completedTotal)
+            .arg(status.requiredTotal)
+            .arg(status.isComplete ? "complete" : "incomplete")
+            .arg(promptParts.join(", ")));
+}
+
+bool MainWindow::ensureEnrollmentComplete(const QString &participantId)
+{
+    EnrollmentStatus status;
+
+    if (!databaseManager_.loadEnrollmentStatus(participantId, status))
+    {
+        QMessageBox::warning(
+            this,
+            "Enrollment Check Failed",
+            QString("Could not load enrollment status:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return false;
+    }
+
+    updateEnrollmentStatus();
+
+    if (status.isComplete)
+    {
+        return true;
+    }
+
+    QStringList missingParts;
+
+    for (const EnrollmentPromptStatus &promptStatus : status.prompts)
+    {
+        if (promptStatus.completedCount < promptStatus.requiredCount)
+        {
+            missingParts << QString("%1: %2 more")
+                                .arg(promptStatus.promptLabel)
+                                .arg(promptStatus.requiredCount - promptStatus.completedCount);
+        }
+    }
+
+    QMessageBox::information(
+        this,
+        "Enrollment Incomplete",
+        QString(
+            "Participant '%1' is not fully enrolled yet.\n\n"
+            "Enrollment: %2/%3\n"
+            "Missing:\n%4")
+            .arg(participantId)
+            .arg(status.completedTotal)
+            .arg(status.requiredTotal)
+            .arg(missingParts.join("\n")));
+
+    return false;
 }
 
 void MainWindow::syncSessionMetadataFromUi()
 {
-    currentSession_.participantId = participantIdEdit_->text().trimmed();
+    currentSession_.participantId = currentParticipantId();
     currentSession_.samplePurpose = samplePurposeCombo_->currentText().trimmed();
     currentSession_.textMode = textModeCombo_->currentText().trimmed();
     currentSession_.promptLabel = promptLabelEdit_->text().trimmed();
@@ -227,7 +417,8 @@ void MainWindow::updateSessionStatus()
             .arg(featureVector.ignoredRepeatRatio * 100.0, 0, 'f', 1));
 }
 
-void MainWindow::saveCurrentSession()
+bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
+                                             bool resetConsentAfterSave)
 {
     const SessionSummary summary =
         FeatureExtractor::buildSessionSummary(currentSession_);
@@ -241,8 +432,8 @@ void MainWindow::saveCurrentSession()
     {
         QMessageBox::warning(this, "Missing Participant ID",
                              "Please enter a participant ID before saving the session.");
-        participantIdEdit_->setFocus();
-        return;
+        participantIdCombo_->setFocus();
+        return false;
     }
 
     if (!consentCheckBox_->isChecked())
@@ -250,14 +441,14 @@ void MainWindow::saveCurrentSession()
         QMessageBox::warning(this, "Consent Required",
                              "Please confirm consent before saving the typing sample.");
         consentCheckBox_->setFocus();
-        return;
+        return false;
     }
 
     if (summary.storedEvents == 0)
     {
         QMessageBox::information(this, "No Data",
                                  "There is no captured session data to save.");
-        return;
+        return false;
     }
 
     const QString rawSessionFilePath =
@@ -267,7 +458,7 @@ void MainWindow::saveCurrentSession()
     {
         QMessageBox::warning(this, "Save Failed",
                              "Could not write the raw session events CSV file.");
-        return;
+        return false;
     }
 
     const SessionFeatureVector featureVector =
@@ -278,7 +469,7 @@ void MainWindow::saveCurrentSession()
     {
         QMessageBox::warning(this, "Save Failed",
                              "Could not append the feature vector to the CSV file.");
-        return;
+        return false;
     }
 
     if (!databaseManager_.saveSession(currentSession_, summary, featureVector))
@@ -288,7 +479,7 @@ void MainWindow::saveCurrentSession()
             "Database Save Failed",
             QString("Could not save session to SQLite:\n%1")
                 .arg(databaseManager_.lastErrorText()));
-        return;
+        return false;
     }
 
     SavedSessionCheck savedCheck;
@@ -301,7 +492,7 @@ void MainWindow::saveCurrentSession()
             "Database Verification Failed",
             QString("Could not verify saved SQLite data:\n%1")
                 .arg(databaseManager_.lastErrorText()));
-        return;
+        return false;
     }
 
     if (savedCheck.storedEventCount != currentSession_.events.size())
@@ -312,7 +503,7 @@ void MainWindow::saveCurrentSession()
             QString("Saved event count mismatch.\nExpected: %1\nSaved: %2")
                 .arg(currentSession_.events.size())
                 .arg(savedCheck.storedEventCount));
-        return;
+        return false;
     }
 
     if (!savedCheck.hasFeatureRow)
@@ -321,7 +512,7 @@ void MainWindow::saveCurrentSession()
             this,
             "Database Verification Failed",
             "The feature row was not found in SQLite.");
-        return;
+        return false;
     }
 
     DatabaseStats databaseStats;
@@ -333,37 +524,193 @@ void MainWindow::saveCurrentSession()
             "Database Statistics Failed",
             QString("Could not load SQLite statistics:\n%1")
                 .arg(databaseManager_.lastErrorText()));
+        return false;
+    }
+
+    if (showSuccessMessage)
+    {
+        QMessageBox::information(
+            this,
+            "Session Saved",
+            QString(
+                "Feature vector saved to:\n%1\n\n"
+                "Raw session saved to:\n%2\n\n"
+                "SQLite database:\n%3\n\n"
+                "SQLite events verified: %4\n\n"
+                "Database totals:\n"
+                "Participants: %5\n"
+                "Sessions: %6\n"
+                "Events: %7\n"
+                "Feature rows: %8")
+                .arg(QDir::toNativeSeparators(featureFilePath))
+                .arg(QDir::toNativeSeparators(rawSessionFilePath))
+                .arg(QDir::toNativeSeparators(databaseManager_.databaseFilePath()))
+                .arg(savedCheck.storedEventCount)
+                .arg(databaseStats.participantCount)
+                .arg(databaseStats.sessionCount)
+                .arg(databaseStats.eventCount)
+                .arg(databaseStats.featureRowCount)
+            );
+    }
+
+    typingArea_->clear();
+
+    if (resetConsentAfterSave)
+    {
+        consentCheckBox_->setChecked(false);
+    }
+
+    refreshParticipantList();
+    startNewSession();
+    updateSessionStatus();
+    updateEnrollmentStatus();
+    typingArea_->setFocus();
+
+    return true;
+}
+
+void MainWindow::saveCurrentSession()
+{
+    saveCurrentSessionToStorage(true, true);
+}
+
+void MainWindow::startEnrollment()
+{
+    const QString participantId = currentParticipantId();
+
+    if (participantId.isEmpty())
+    {
+        QMessageBox::warning(this, "Missing Participant ID",
+                             "Please enter a participant ID before enrollment.");
+        participantIdCombo_->setFocus();
         return;
     }
 
-    QMessageBox::information(
-        this,
-        "Session Saved",
-        QString(
-            "Feature vector saved to:\n%1\n\n"
-            "Raw session saved to:\n%2\n\n"
-            "SQLite database:\n%3\n\n"
-            "SQLite events verified: %4\n\n"
-            "Database totals:\n"
-            "Participants: %5\n"
-            "Sessions: %6\n"
-            "Events: %7\n"
-            "Feature rows: %8")
-            .arg(QDir::toNativeSeparators(featureFilePath))
-            .arg(QDir::toNativeSeparators(rawSessionFilePath))
-            .arg(QDir::toNativeSeparators(databaseManager_.databaseFilePath()))
-            .arg(savedCheck.storedEventCount)
-            .arg(databaseStats.participantCount)
-            .arg(databaseStats.sessionCount)
-            .arg(databaseStats.eventCount)
-            .arg(databaseStats.featureRowCount)
-        );
+    EnrollmentStatus status;
+
+    if (!databaseManager_.loadEnrollmentStatus(participantId, status))
+    {
+        QMessageBox::warning(this, "Enrollment Failed",
+                             databaseManager_.lastErrorText());
+        return;
+    }
+
+    if (status.isComplete)
+    {
+        QMessageBox::information(
+            this,
+            "Enrollment Complete",
+            "This participant already has the required fixed-text training samples.");
+        return;
+    }
+
+    enrollmentPromptLabels_.clear();
+
+    for (const EnrollmentPromptStatus &promptStatus : status.prompts)
+    {
+        const int remaining =
+            promptStatus.requiredCount - promptStatus.completedCount;
+
+        for (int i = 0; i < remaining; ++i)
+        {
+            enrollmentPromptLabels_.append(promptStatus.promptLabel);
+        }
+    }
+
+    enrollmentActive_ = true;
+    enrollmentStepIndex_ = 0;
+
+    configureEnrollmentStep();
+}
+
+void MainWindow::saveEnrollmentStep()
+{
+    if (!enrollmentActive_)
+    {
+        return;
+    }
+
+    if (!saveCurrentSessionToStorage(false, false))
+    {
+        return;
+    }
+
+    ++enrollmentStepIndex_;
+
+    if (enrollmentStepIndex_ >= enrollmentPromptLabels_.size())
+    {
+        enrollmentActive_ = false;
+        updateEnrollmentControls();
+        updateEnrollmentStatus();
+
+        QMessageBox::information(
+            this,
+            "Enrollment Complete",
+            "Required fixed-text enrollment samples are complete.");
+
+        buildCurrentParticipantProfile();
+        return;
+    }
+
+    configureEnrollmentStep();
+}
+
+void MainWindow::configureEnrollmentStep()
+{
+    if (!enrollmentActive_ ||
+        enrollmentStepIndex_ >= enrollmentPromptLabels_.size())
+    {
+        updateEnrollmentControls();
+        return;
+    }
+
+    const QString promptLabel =
+        enrollmentPromptLabels_.at(enrollmentStepIndex_);
+
+    const int promptIndex = promptCombo_->findData(promptLabel);
+
+    if (promptIndex >= 0)
+    {
+        promptCombo_->setCurrentIndex(promptIndex);
+    }
+
+    samplePurposeCombo_->setCurrentText("training");
+    textModeCombo_->setCurrentText("fixed_text");
+    attemptTypeCombo_->setCurrentText("genuine");
 
     typingArea_->clear();
-    consentCheckBox_->setChecked(false);
     startNewSession();
     updateSessionStatus();
+    updateEnrollmentControls();
     typingArea_->setFocus();
+}
+
+void MainWindow::updateEnrollmentControls()
+{
+    startEnrollmentButton_->setEnabled(!enrollmentActive_);
+    saveAndNextEnrollmentButton_->setEnabled(enrollmentActive_);
+
+    participantIdCombo_->setEnabled(!enrollmentActive_);
+    samplePurposeCombo_->setEnabled(!enrollmentActive_);
+    textModeCombo_->setEnabled(!enrollmentActive_);
+    attemptTypeCombo_->setEnabled(!enrollmentActive_);
+    promptCombo_->setEnabled(!enrollmentActive_);
+
+    saveSessionButton_->setEnabled(!enrollmentActive_);
+    buildProfileButton_->setEnabled(!enrollmentActive_);
+    verifySessionButton_->setEnabled(!enrollmentActive_);
+
+    if (!enrollmentActive_)
+    {
+        enrollmentProgressLabel_->setText("Enrollment flow: not started");
+        return;
+    }
+
+    enrollmentProgressLabel_->setText(
+        QString("Enrollment flow: sample %1/%2 | %3")
+            .arg(enrollmentStepIndex_ + 1)
+            .arg(enrollmentPromptLabels_.size())
+            .arg(enrollmentPromptLabels_.at(enrollmentStepIndex_)));
 }
 
 void MainWindow::resetCurrentSession()
@@ -377,13 +724,18 @@ void MainWindow::resetCurrentSession()
 
 void MainWindow::buildCurrentParticipantProfile()
 {
-    const QString participantId = participantIdEdit_->text().trimmed();
+    const QString participantId = currentParticipantId();
 
     if (participantId.isEmpty())
     {
         QMessageBox::warning(this, "Missing Participant ID",
                              "Please enter a participant ID before building a profile.");
-        participantIdEdit_->setFocus();
+        participantIdCombo_->setFocus();
+        return;
+    }
+
+    if (!ensureEnrollmentComplete(participantId))
+    {
         return;
     }
 
@@ -432,13 +784,18 @@ void MainWindow::buildCurrentParticipantProfile()
 
 void MainWindow::verifyCurrentSession()
 {
-    const QString participantId = participantIdEdit_->text().trimmed();
+    const QString participantId = currentParticipantId();
 
     if (participantId.isEmpty())
     {
         QMessageBox::warning(this, "Missing Participant ID",
                              "Please enter a participant ID before verification.");
-        participantIdEdit_->setFocus();
+        participantIdCombo_->setFocus();
+        return;
+    }
+
+    if (!ensureEnrollmentComplete(participantId))
+    {
         return;
     }
 
@@ -532,13 +889,13 @@ void MainWindow::verifyCurrentSession()
 
 void MainWindow::showVerificationStats()
 {
-    const QString participantId = participantIdEdit_->text().trimmed();
+    const QString participantId = currentParticipantId();
 
     if (participantId.isEmpty())
     {
         QMessageBox::warning(this, "Missing Participant ID",
                              "Please enter a participant ID before loading verification statistics.");
-        participantIdEdit_->setFocus();
+        participantIdCombo_->setFocus();
         return;
     }
 
@@ -643,13 +1000,13 @@ void MainWindow::showVerificationStats()
 
 void MainWindow::analyzeThresholds()
 {
-    const QString participantId = participantIdEdit_->text().trimmed();
+    const QString participantId = currentParticipantId();
 
     if (participantId.isEmpty())
     {
         QMessageBox::warning(this, "Missing Participant ID",
                              "Please enter a participant ID before running threshold analysis.");
-        participantIdEdit_->setFocus();
+        participantIdCombo_->setFocus();
         return;
     }
 

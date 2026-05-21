@@ -231,6 +231,115 @@ bool DatabaseManager::ensureParticipantExists(const QString &participantId)
     return true;
 }
 
+bool DatabaseManager::loadParticipantIds(QStringList &participantIds)
+{
+    lastErrorText_.clear();
+    participantIds.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+
+    if (!query.exec(
+            "SELECT p.participant_id "
+            "FROM participants p "
+            "LEFT JOIN sessions s ON s.participant_id = p.participant_id "
+            "WHERE p.is_active = 1 "
+            "GROUP BY p.participant_id "
+            "ORDER BY MAX(s.started_at_utc) DESC, p.participant_id COLLATE NOCASE ASC"))
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    while (query.next())
+    {
+        participantIds.append(query.value(0).toString());
+    }
+
+    return true;
+}
+
+bool DatabaseManager::loadEnrollmentStatus(const QString &participantId,
+                                           EnrollmentStatus &status)
+{
+    lastErrorText_.clear();
+    status = EnrollmentStatus{};
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    const QString normalizedParticipantId = participantId.trimmed();
+
+    if (normalizedParticipantId.isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Participant ID is empty.");
+        return false;
+    }
+
+    status.prompts = {
+        {QStringLiteral("prompt_01"), 3, 0},
+        {QStringLiteral("prompt_02"), 3, 0},
+        {QStringLiteral("prompt_03"), 3, 0}
+    };
+
+    bool isComplete = true;
+
+    for (EnrollmentPromptStatus &promptStatus : status.prompts)
+    {
+        QSqlQuery query(database_);
+        query.prepare(
+            "SELECT COUNT(*) "
+            "FROM sessions "
+            "WHERE participant_id = ? "
+            "AND sample_purpose = 'training' "
+            "AND text_mode = 'fixed_text' "
+            "AND prompt_label = ?");
+
+        query.addBindValue(normalizedParticipantId);
+        query.addBindValue(promptStatus.promptLabel);
+
+        if (!query.exec())
+        {
+            lastErrorText_ = query.lastError().text();
+            return false;
+        }
+
+        if (!query.next())
+        {
+            lastErrorText_ = QStringLiteral("Could not read enrollment status.");
+            return false;
+        }
+
+        promptStatus.completedCount = query.value(0).toInt();
+
+        status.requiredTotal += promptStatus.requiredCount;
+
+        const int cappedCompletedCount =
+            promptStatus.completedCount > promptStatus.requiredCount
+                ? promptStatus.requiredCount
+                : promptStatus.completedCount;
+
+        status.completedTotal += cappedCompletedCount;
+
+        if (promptStatus.completedCount < promptStatus.requiredCount)
+        {
+            isComplete = false;
+        }
+    }
+
+    status.isComplete = isComplete;
+
+    return true;
+}
+
 bool DatabaseManager::saveSession(const TypingSession &session,
                                   const SessionSummary &summary,
                                   const SessionFeatureVector &features)
@@ -527,6 +636,8 @@ bool DatabaseManager::loadTrainingFeatureVectors(
         "JOIN sessions s ON s.session_id = f.session_id "
         "WHERE s.participant_id = ? "
         "AND s.sample_purpose = 'training' "
+        "AND s.text_mode = 'fixed_text' "
+        "AND s.prompt_label IN ('prompt_01', 'prompt_02', 'prompt_03') "
         "ORDER BY s.started_at_utc ASC");
 
     query.addBindValue(participantId.trimmed());

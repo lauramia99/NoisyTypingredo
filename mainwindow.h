@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QStringList>
 
 #include "databasemanager.h"
 #include "typingsession.h"
@@ -12,6 +13,8 @@ class QComboBox;
 class QLineEdit;
 class QPushButton;
 class QDoubleSpinBox;
+class QLabel;
+class QPlainTextEdit;
 
 class MainWindow : public QMainWindow
 {
@@ -35,8 +38,24 @@ private:
     void showVerificationStats();
     void analyzeThresholds();
 
+    void updateEnrollmentStatus();
+    bool ensureEnrollmentComplete(const QString &participantId);
+
+    void populatePromptSelector();
+    void updatePromptSelection();
+
+    QString currentParticipantId() const;
+    void refreshParticipantList();
+
+    bool saveCurrentSessionToStorage(bool showSuccessMessage,
+                                     bool resetConsentAfterSave);
+    void startEnrollment();
+    void saveEnrollmentStep();
+    void configureEnrollmentStep();
+    void updateEnrollmentControls();
+
     typingtextedit *typingArea_ = nullptr;
-    QLineEdit *participantIdEdit_ = nullptr;
+    QComboBox *participantIdCombo_ = nullptr;
     QComboBox *samplePurposeCombo_ = nullptr;
     QComboBox *textModeCombo_ = nullptr;
     QComboBox *attemptTypeCombo_ = nullptr;
@@ -48,7 +67,17 @@ private:
     QPushButton *verifySessionButton_ = nullptr;
     QPushButton *verificationStatsButton_ = nullptr;
     QPushButton *thresholdAnalysisButton_ = nullptr;
+    QPushButton *startEnrollmentButton_ = nullptr;
+    QPushButton *saveAndNextEnrollmentButton_ = nullptr;
     QDoubleSpinBox *verificationThresholdSpinBox_ = nullptr;
+    QLabel *enrollmentStatusLabel_ = nullptr;
+    QLabel *enrollmentProgressLabel_ = nullptr;
+    QComboBox *promptCombo_ = nullptr;
+    QPlainTextEdit *promptDisplay_ = nullptr;
+
+    bool enrollmentActive_ = false;
+    int enrollmentStepIndex_ = 0;
+    QStringList enrollmentPromptLabels_;
 
     TypingSession currentSession_;
     DatabaseManager databaseManager_;

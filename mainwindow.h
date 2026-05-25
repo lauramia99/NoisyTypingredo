@@ -14,7 +14,6 @@ class QLineEdit;
 class QPushButton;
 class QDoubleSpinBox;
 class QLabel;
-class QPlainTextEdit;
 
 class MainWindow : public QMainWindow
 {
@@ -38,13 +37,18 @@ private:
     void showVerificationStats();
     void analyzeThresholds();
 
+    void updateSaveButtonState();
+    bool currentSessionIsReadyToSave() const;
+
     void updateEnrollmentStatus();
     bool ensureEnrollmentComplete(const QString &participantId);
 
     void populatePromptSelector();
     void updatePromptSelection();
+    bool validateCurrentPromptText();
 
     QString currentParticipantId() const;
+    QString promptProgressText() const;
     void refreshParticipantList();
 
     bool saveCurrentSessionToStorage(bool showSuccessMessage,
@@ -73,7 +77,6 @@ private:
     QLabel *enrollmentStatusLabel_ = nullptr;
     QLabel *enrollmentProgressLabel_ = nullptr;
     QComboBox *promptCombo_ = nullptr;
-    QPlainTextEdit *promptDisplay_ = nullptr;
 
     bool enrollmentActive_ = false;
     int enrollmentStepIndex_ = 0;

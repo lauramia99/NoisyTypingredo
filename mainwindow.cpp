@@ -22,7 +22,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QStatusBar>
@@ -85,10 +84,6 @@ MainWindow::MainWindow(QWidget *parent)
     auto *promptSelectorLabel = new QLabel("Prompt:", centralWidget);
     promptCombo_ = new QComboBox(centralWidget);
 
-    promptDisplay_ = new QPlainTextEdit(centralWidget);
-    promptDisplay_->setReadOnly(true);
-    promptDisplay_->setMaximumHeight(90);
-
     consentCheckBox_ = new QCheckBox("Consent confirmed", centralWidget);
     consentCheckBox_->setToolTip("Required before saving a typing sample.");
 
@@ -120,9 +115,8 @@ MainWindow::MainWindow(QWidget *parent)
     sessionLayout->addWidget(promptCombo_, 2, 1);
     sessionLayout->addWidget(promptLabelLabel, 2, 2);
     sessionLayout->addWidget(promptLabelEdit_, 2, 3);
-    sessionLayout->addWidget(promptDisplay_, 3, 0, 1, 4);
-    sessionLayout->addWidget(enrollmentStatusLabel_, 4, 0, 1, 4);
-    sessionLayout->addWidget(enrollmentProgressLabel_, 5, 0, 1, 4);
+    sessionLayout->addWidget(enrollmentStatusLabel_, 3, 0, 1, 4);
+    sessionLayout->addWidget(enrollmentProgressLabel_, 4, 0, 1, 4);
     sessionLayout->setColumnStretch(1, 1);
     sessionLayout->setColumnStretch(3, 1);
 
@@ -162,6 +156,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(typingArea_, &typingtextedit::keystrokeCaptured, this,
             &MainWindow::handleCapturedKeystroke);
 
+    connect(typingArea_, &typingtextedit::typingProgressChanged, this,
+            [this]() {
+                updateSessionStatus();
+                updateSaveButtonState();
+            });
+
     connect(verifySessionButton_, &QPushButton::clicked,
             this, &MainWindow::verifyCurrentSession);
 
@@ -186,6 +186,7 @@ MainWindow::MainWindow(QWidget *parent)
             [this, refreshSessionMetadata](const QString &) {
                 refreshSessionMetadata();
                 updateEnrollmentStatus();
+                updateSaveButtonState();
             });
 
     connect(samplePurposeCombo_, &QComboBox::currentTextChanged, this,
@@ -194,15 +195,25 @@ MainWindow::MainWindow(QWidget *parent)
             });
 
     connect(textModeCombo_, &QComboBox::currentTextChanged, this,
-            [refreshSessionMetadata](const QString &) {
-                refreshSessionMetadata();
-            });
-
-    connect(promptCombo_, &QComboBox::currentTextChanged, this,
             [this, refreshSessionMetadata](const QString &) {
                 updatePromptSelection();
                 refreshSessionMetadata();
+                startNewSession();
+                updateSessionStatus();
+                updateSaveButtonState();
+                updateEnrollmentControls();
             });
+
+    connect(promptCombo_, &QComboBox::currentTextChanged, this,
+            [this](const QString &) {
+                updatePromptSelection();
+                startNewSession();
+                updateSessionStatus();
+                updateSaveButtonState();
+            });
+
+    connect(consentCheckBox_, &QCheckBox::checkStateChanged, this,
+        &MainWindow::updateSaveButtonState);
 
     populatePromptSelector();
     updatePromptSelection();
@@ -222,6 +233,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     startNewSession();
     updateSessionStatus();
+    updateSaveButtonState();
     updateEnrollmentStatus();
     updateEnrollmentControls();
 }
@@ -263,6 +275,14 @@ void MainWindow::populatePromptSelector()
 
 void MainWindow::updatePromptSelection()
 {
+
+    if (textModeCombo_->currentText() == QStringLiteral("free_text"))
+    {
+        promptLabelEdit_->setText("free_text");
+        typingArea_->setPromptText(QString());
+        return;
+    }
+
     const QString promptLabel =
         promptCombo_->currentData().toString();
 
@@ -270,9 +290,57 @@ void MainWindow::updatePromptSelection()
         PromptLibrary::promptByLabel(promptLabel);
 
     promptLabelEdit_->setText(prompt.label);
-    promptDisplay_->setPlainText(prompt.text);
+    typingArea_->setPromptText(prompt.text);
+}
 
-    textModeCombo_->setCurrentText("fixed_text");
+bool MainWindow::validateCurrentPromptText()
+{
+    if (textModeCombo_->currentText() != QStringLiteral("fixed_text"))
+    {
+        return true;
+    }
+
+    const QString expectedText = typingArea_->promptText();
+    const QString typedText = typingArea_->typedText();
+
+    if (typingArea_->isCompleteAndCorrect())
+    {
+        const SessionSummary summary =
+            FeatureExtractor::buildSessionSummary(currentSession_);
+
+        if (summary.pressCount < expectedText.size())
+        {
+            QMessageBox::warning(
+                this,
+                "Typing Sample Too Short",
+                QString(
+                    "The text matches the prompt, but the captured keypress count is too low.\n\n"
+                    "Expected at least: %1 key presses\n"
+                    "Captured: %2 key presses\n\n"
+                    "Please type the prompt manually.")
+                    .arg(expectedText.size())
+                    .arg(summary.pressCount));
+
+            typingArea_->setFocus();
+            return false;
+        }
+
+        return true;
+    }
+
+    QMessageBox::warning(
+        this,
+        "Prompt Text Mismatch",
+        QString(
+            "The typed text does not match the selected fixed prompt.\n\n"
+            "Expected characters: %1\n"
+            "Typed characters: %2\n\n"
+            "Please correct the text before saving.")
+            .arg(expectedText.size())
+            .arg(typedText.size()));
+
+    typingArea_->setFocus();
+    return false;
 }
 
 void MainWindow::updateEnrollmentStatus()
@@ -406,7 +474,7 @@ void MainWindow::updateSessionStatus()
         FeatureExtractor::buildFeatureVector(currentSession_, summary);
 
     statusBar()->showMessage(
-        QString("User: %1 | Purpose: %2 | Mode: %3 | Stored: %4 | Dwell avg: %5 ms | Flight avg: %6 ms | Open keys: %7 | Repeat: %8%")
+        QString("User: %1 | Purpose: %2 | Mode: %3 | Stored: %4 | Dwell avg: %5 ms | Flight avg: %6 ms | Open keys: %7 | Repeat: %8% | %9")
             .arg(featureVector.participantId.isEmpty() ? "-" : featureVector.participantId)
             .arg(featureVector.samplePurpose.isEmpty() ? "-" : featureVector.samplePurpose)
             .arg(featureVector.textMode.isEmpty() ? "-" : featureVector.textMode)
@@ -414,7 +482,58 @@ void MainWindow::updateSessionStatus()
             .arg(featureVector.averageDwellMs, 0, 'f', 2)
             .arg(featureVector.averageFlightMs, 0, 'f', 2)
             .arg(featureVector.keysStillPressedCount)
-            .arg(featureVector.ignoredRepeatRatio * 100.0, 0, 'f', 1));
+            .arg(featureVector.ignoredRepeatRatio * 100.0, 0, 'f', 1)
+            .arg(promptProgressText()));
+}
+
+bool MainWindow::currentSessionIsReadyToSave() const
+{
+    if (currentParticipantId().isEmpty())
+    {
+        return false;
+    }
+
+    if (!consentCheckBox_->isChecked())
+    {
+        return false;
+    }
+
+    if (textModeCombo_->currentText() == QStringLiteral("fixed_text") &&
+        !typingArea_->isCompleteAndCorrect())
+    {
+        return false;
+    }
+
+    return !currentSession_.events.isEmpty();
+}
+
+void MainWindow::updateSaveButtonState()
+{
+    const bool readyToSave = currentSessionIsReadyToSave();
+
+    saveSessionButton_->setEnabled(!enrollmentActive_ && readyToSave);
+    saveAndNextEnrollmentButton_->setEnabled(enrollmentActive_ && readyToSave);
+}
+
+QString MainWindow::promptProgressText() const
+{
+    const int typedCount = typingArea_->typedCharacterCount();
+    const int promptCount = typingArea_->promptCharacterCount();
+    const int mistakes = typingArea_->mistakeCount();
+
+    if (promptCount == 0)
+    {
+        return "Prompt: -";
+    }
+
+    const QString state =
+        typingArea_->isCompleteAndCorrect() ? "complete" : "in progress";
+
+    return QString("Prompt: %1/%2 | Mistakes: %3 | %4")
+        .arg(typedCount)
+        .arg(promptCount)
+        .arg(mistakes)
+        .arg(state);
 }
 
 bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
@@ -422,6 +541,11 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
 {
     const SessionSummary summary =
         FeatureExtractor::buildSessionSummary(currentSession_);
+
+    if (!validateCurrentPromptText())
+    {
+        return false;
+    }
 
     if (currentSession_.participantId.isEmpty())
     {
@@ -553,7 +677,7 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
             );
     }
 
-    typingArea_->clear();
+    typingArea_->resetTypedText();
 
     if (resetConsentAfterSave)
     {
@@ -563,6 +687,7 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
     refreshParticipantList();
     startNewSession();
     updateSessionStatus();
+    updateSaveButtonState();
     updateEnrollmentStatus();
     typingArea_->setFocus();
 
@@ -678,9 +803,10 @@ void MainWindow::configureEnrollmentStep()
     textModeCombo_->setCurrentText("fixed_text");
     attemptTypeCombo_->setCurrentText("genuine");
 
-    typingArea_->clear();
+    typingArea_->resetTypedText();
     startNewSession();
     updateSessionStatus();
+    updateSaveButtonState();
     updateEnrollmentControls();
     typingArea_->setFocus();
 }
@@ -688,7 +814,6 @@ void MainWindow::configureEnrollmentStep()
 void MainWindow::updateEnrollmentControls()
 {
     startEnrollmentButton_->setEnabled(!enrollmentActive_);
-    saveAndNextEnrollmentButton_->setEnabled(enrollmentActive_);
 
     participantIdCombo_->setEnabled(!enrollmentActive_);
     samplePurposeCombo_->setEnabled(!enrollmentActive_);
@@ -696,9 +821,13 @@ void MainWindow::updateEnrollmentControls()
     attemptTypeCombo_->setEnabled(!enrollmentActive_);
     promptCombo_->setEnabled(!enrollmentActive_);
 
-    saveSessionButton_->setEnabled(!enrollmentActive_);
     buildProfileButton_->setEnabled(!enrollmentActive_);
     verifySessionButton_->setEnabled(!enrollmentActive_);
+
+    const bool readyToSave = currentSessionIsReadyToSave();
+
+    saveSessionButton_->setEnabled(!enrollmentActive_ && readyToSave);
+    saveAndNextEnrollmentButton_->setEnabled(enrollmentActive_ && readyToSave);
 
     if (!enrollmentActive_)
     {
@@ -715,10 +844,11 @@ void MainWindow::updateEnrollmentControls()
 
 void MainWindow::resetCurrentSession()
 {
-    typingArea_->clear();
+    typingArea_->resetTypedText();
     consentCheckBox_->setChecked(false);
     startNewSession();
     updateSessionStatus();
+    updateSaveButtonState();
     typingArea_->setFocus();
 }
 

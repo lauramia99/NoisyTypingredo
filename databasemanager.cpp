@@ -6,6 +6,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
+#include <QCryptographicHash>
 
 #include "typingsession.h"
 #include "sessionsummary.h"
@@ -24,6 +25,29 @@ QString projectDataDirectoryPath()
     const QString projectRoot = QString::fromUtf8(NOISYTYPING_PROJECT_DIR);
     return QDir(projectRoot).filePath("data");
 }
+
+QString buildAuditHash(const QString &createdAtUtc,
+                       const QString &eventType,
+                       const QString &participantId,
+                       const QString &sessionId,
+                       const QString &details,
+                       const QString &previousHash)
+{
+    const QString payload =
+        createdAtUtc + '\n' +
+        eventType + '\n' +
+        participantId + '\n' +
+        sessionId + '\n' +
+        details + '\n' +
+        previousHash;
+
+    return QString::fromLatin1(
+        QCryptographicHash::hash(payload.toUtf8(),
+                                 QCryptographicHash::Sha256)
+            .toHex());
+}
+
+
 }
 
 DatabaseManager::DatabaseManager() = default;
@@ -280,6 +304,39 @@ bool DatabaseManager::initializeSchema()
             return true;
         };
 
+
+    const auto ensureAuditEventColumn =
+        [this](const QString &columnName, const QString &definition) {
+            QSqlQuery columnQuery(database_);
+
+            if (!columnQuery.exec("PRAGMA table_info(audit_events)"))
+            {
+                lastErrorText_ = columnQuery.lastError().text();
+                return false;
+            }
+
+            while (columnQuery.next())
+            {
+                if (columnQuery.value(1).toString() == columnName)
+                {
+                    return true;
+                }
+            }
+
+            QSqlQuery alterQuery(database_);
+            const QString statement =
+                QString("ALTER TABLE audit_events ADD COLUMN %1 %2")
+                    .arg(columnName, definition);
+
+            if (!alterQuery.exec(statement))
+            {
+                lastErrorText_ = alterQuery.lastError().text();
+                return false;
+            }
+
+            return true;
+        };
+
     if (!ensureSessionFeatureColumn(QStringLiteral("typed_character_count"),
                                     QStringLiteral("INTEGER NOT NULL DEFAULT 0")) ||
         !ensureSessionFeatureColumn(QStringLiteral("prompt_character_count"),
@@ -361,10 +418,22 @@ bool DatabaseManager::initializeSchema()
             "event_type TEXT NOT NULL,"
             "participant_id TEXT,"
             "session_id TEXT,"
-            "details TEXT NOT NULL"
+            "details TEXT NOT NULL,"
+            "previous_hash TEXT NOT NULL DEFAULT '',"
+            "event_hash TEXT NOT NULL DEFAULT ''"
             ")"))
     {
         lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    if (!ensureAuditEventColumn(
+            QStringLiteral("previous_hash"),
+            QStringLiteral("TEXT NOT NULL DEFAULT '')) ||
+        !ensureAuditEventColumn(
+            QStringLiteral("event_hash"),
+            QStringLiteral("TEXT NOT NULL DEFAULT ''))))
+    {
         return false;
     }
 
@@ -1106,17 +1175,52 @@ bool DatabaseManager::saveAuditEvent(const AuditEventRecord &event)
         return false;
     }
 
+    QString previousHash;
+
+    QSqlQuery previousQuery(database_);
+    if (!previousQuery.exec(
+            "SELECT event_hash "
+            "FROM audit_events "
+            "ORDER BY id DESC "
+            "LIMIT 1"))
+    {
+        lastErrorText_ = previousQuery.lastError().text();
+        return false;
+    }
+
+    if (previousQuery.next())
+    {
+        previousHash = previousQuery.value(0).toString();
+    }
+
+    const QString createdAtUtc =
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+
+    const QString eventType = event.eventType.trimmed();
+    const QString participantId = event.participantId.trimmed();
+    const QString sessionId = event.sessionId.trimmed();
+
+    const QString eventHash =
+        buildAuditHash(createdAtUtc,
+                    eventType,
+                    participantId,
+                    sessionId,
+                    event.details,
+                    previousHash);
+
     QSqlQuery query(database_);
     query.prepare(
         "INSERT INTO audit_events "
-        "(created_at_utc, event_type, participant_id, session_id, details) "
-        "VALUES (?, ?, ?, ?, ?)");
+        "(created_at_utc, event_type, participant_id, session_id, details, previous_hash, event_hash) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)");
 
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     query.addBindValue(event.eventType.trimmed());
     query.addBindValue(event.participantId.trimmed());
     query.addBindValue(event.sessionId.trimmed());
     query.addBindValue(event.details);
+    query.addBindValue(previousHash);
+    query.addBindValue(eventHash);
 
     if (!query.exec())
     {

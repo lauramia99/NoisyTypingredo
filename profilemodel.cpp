@@ -60,6 +60,8 @@ UserProfile ProfileModel::buildProfile(
     UserProfile profile;
     profile.participantId = participantId;
     profile.trainingSessionCount = trainingSamples.size();
+    profile.modelVersion = QStringLiteral("baseline_v1");
+    profile.featureSetVersion = QStringLiteral("timing_basic_v1");
 
     QVector<double> dwellValues;
     QVector<double> flightValues;

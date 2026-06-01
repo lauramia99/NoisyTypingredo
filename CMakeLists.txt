@@ -28,6 +28,7 @@ qt_add_executable(NoisyTyping
     thresholdanalysis.h thresholdanalysis.cpp
     thresholdanalysiscsvwriter.h thresholdanalysiscsvwriter.cpp
     promptlibrary.h promptlibrary.cpp
+    auditeventscsvwriter.h auditeventscsvwriter.cpp
 )
 
 target_link_libraries(NoisyTyping

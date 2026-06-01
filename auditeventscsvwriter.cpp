@@ -1,4 +1,4 @@
-#include "verificationresultscsvwriter.h"
+#include "auditeventscsvwriter.h"
 
 #include <QDir>
 #include <QFile>
@@ -30,41 +30,30 @@ QString escapeCsv(QString value)
 QString csvHeader()
 {
     return QStringLiteral(
-        "participant_id,session_id,attempt_type,profile_model_version,"
-        "profile_feature_set_version,profile_created_at_utc,created_at_utc,accepted,"
-        "threshold,total_score,dwell_deviation,flight_deviation,"
-        "training_session_count");
+        "created_at_utc,event_type,participant_id,session_id,details");
 }
 
-QString toCsvRow(const VerificationResultExportRow &row)
+QString toCsvRow(const AuditEventExportRow &row)
 {
     QStringList columns;
+    columns << escapeCsv(row.createdAtUtc);
+    columns << escapeCsv(row.eventType);
     columns << escapeCsv(row.participantId);
     columns << escapeCsv(row.sessionId);
-    columns << escapeCsv(row.attemptType);
-    columns << escapeCsv(row.profileModelVersion);
-    columns << escapeCsv(row.profileFeatureSetVersion);
-    columns << escapeCsv(row.profileCreatedAtUtc);
-    columns << escapeCsv(row.createdAtUtc);
-    columns << (row.accepted ? "1" : "0");
-    columns << QString::number(row.threshold, 'f', 6);
-    columns << QString::number(row.totalScore, 'f', 6);
-    columns << QString::number(row.dwellDeviation, 'f', 6);
-    columns << QString::number(row.flightDeviation, 'f', 6);
-    columns << QString::number(row.trainingSessionCount);
+    columns << escapeCsv(row.details);
 
     return columns.join(',');
 }
 }
 
-QString VerificationResultsCsvWriter::defaultFilePath()
+QString AuditEventsCsvWriter::defaultFilePath()
 {
-    return QDir(projectDataDirectoryPath()).filePath("verification_results.csv");
+    return QDir(projectDataDirectoryPath()).filePath("audit_events.csv");
 }
 
-bool VerificationResultsCsvWriter::writeRows(
+bool AuditEventsCsvWriter::writeRows(
     const QString &filePath,
-    const QVector<VerificationResultExportRow> &rows)
+    const QVector<AuditEventExportRow> &rows)
 {
     const QFileInfo fileInfo(filePath);
     QDir parentDir = fileInfo.dir();
@@ -83,7 +72,7 @@ bool VerificationResultsCsvWriter::writeRows(
     QTextStream stream(&file);
     stream << csvHeader() << '\n';
 
-    for (const VerificationResultExportRow &row : rows)
+    for (const AuditEventExportRow &row : rows)
     {
         stream << toCsvRow(row) << '\n';
     }

@@ -10,6 +10,7 @@
 #include "typingtextedit.h"
 #include "verificationresultscsvwriter.h"
 #include "verificationstatscsvwriter.h"
+#include "auditeventcsvwriter.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -49,6 +50,7 @@ MainWindow::MainWindow(QWidget *parent)
     thresholdAnalysisButton_ = new QPushButton("Threshold Analysis", centralWidget);
     startEnrollmentButton_ = new QPushButton("Start Enrollment", centralWidget);
     saveAndNextEnrollmentButton_ = new QPushButton("Save && Next", centralWidget);
+    exportAuditLogButton_ = new QPushButton("Export Audit Log", centralWidget);
     saveAndNextEnrollmentButton_->setEnabled(false);
 
     auto *participantIdLabel = new QLabel("Participant ID:", centralWidget);
@@ -133,6 +135,7 @@ MainWindow::MainWindow(QWidget *parent)
     actionsLayout->addWidget(thresholdAnalysisButton_, 2, 2, 1, 2);
     actionsLayout->addWidget(startEnrollmentButton_, 3, 0, 1, 2);
     actionsLayout->addWidget(saveAndNextEnrollmentButton_, 3, 2, 1, 2);
+    actionsLayout->addWidget(exportAuditLogButton_, 4, 0, 1, 2);
     actionsLayout->setColumnStretch(4, 1);
 
     typingArea_ = new typingtextedit(centralWidget);
@@ -197,6 +200,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(textModeCombo_, &QComboBox::currentTextChanged, this,
             [this, refreshSessionMetadata](const QString &) {
                 updatePromptSelection();
+                updateTextModeControls();
                 refreshSessionMetadata();
                 startNewSession();
                 updateSessionStatus();
@@ -207,6 +211,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(promptCombo_, &QComboBox::currentTextChanged, this,
             [this](const QString &) {
                 updatePromptSelection();
+                updateTextModeControls();
                 startNewSession();
                 updateSessionStatus();
                 updateSaveButtonState();
@@ -215,8 +220,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(consentCheckBox_, &QCheckBox::checkStateChanged, this,
         &MainWindow::updateSaveButtonState);
 
+    
+    connect(exportAuditLogButton_, &QPushButton::clicked,
+        this, &MainWindow::exportAuditLog);
+
     populatePromptSelector();
     updatePromptSelection();
+    updateTextModeControls();
 
     if (!databaseManager_.open())
     {
@@ -293,10 +303,37 @@ void MainWindow::updatePromptSelection()
     typingArea_->setPromptText(prompt.text);
 }
 
+void MainWindow::updateTextModeControls()
+{
+    const bool fixedTextMode =
+        textModeCombo_->currentText() == QStringLiteral("fixed_text");
+
+    promptCombo_->setEnabled(fixedTextMode && !enrollmentActive_);
+    promptLabelEdit_->setEnabled(false);
+
+    if (!fixedTextMode)
+    {
+        promptLabelEdit_->setText("free_text");
+    }
+}
+
 bool MainWindow::validateCurrentPromptText()
 {
-    if (textModeCombo_->currentText() != QStringLiteral("fixed_text"))
+    if (textModeCombo_->currentText() == QStringLiteral("free_text"))
     {
+        if (typingArea_->typedCharacterCount() < minimumFreeTextCharacters())
+        {
+            QMessageBox::warning(
+                this,
+                "Typing Sample Too Short",
+                QString("Free-text samples require at least %1 characters.\n\nTyped characters: %2")
+                    .arg(minimumFreeTextCharacters())
+                    .arg(typingArea_->typedCharacterCount()));
+
+            typingArea_->setFocus();
+            return false;
+        }
+
         return true;
     }
 
@@ -370,10 +407,18 @@ void MainWindow::updateEnrollmentStatus()
                 ? promptStatus.requiredCount
                 : promptStatus.completedCount;
 
-        promptParts << QString("%1 %2/%3")
-                           .arg(promptStatus.promptLabel)
-                           .arg(shownCompleted)
-                           .arg(promptStatus.requiredCount);
+        QString promptText = QString("%1 %2/%3")
+                                 .arg(promptStatus.promptLabel)
+                                 .arg(shownCompleted)
+                                 .arg(promptStatus.requiredCount);
+
+        if (promptStatus.invalidCount > 0)
+        {
+            promptText += QString(" invalid:%1")
+                              .arg(promptStatus.invalidCount);
+        }
+
+        promptParts << promptText;
     }
 
     enrollmentStatusLabel_->setText(
@@ -383,6 +428,7 @@ void MainWindow::updateEnrollmentStatus()
             .arg(status.isComplete ? "complete" : "incomplete")
             .arg(promptParts.join(", ")));
 }
+
 
 bool MainWindow::ensureEnrollmentComplete(const QString &participantId)
 {
@@ -411,9 +457,17 @@ bool MainWindow::ensureEnrollmentComplete(const QString &participantId)
     {
         if (promptStatus.completedCount < promptStatus.requiredCount)
         {
-            missingParts << QString("%1: %2 more")
-                                .arg(promptStatus.promptLabel)
-                                .arg(promptStatus.requiredCount - promptStatus.completedCount);
+            QString missingText = QString("%1: %2 more valid samples")
+                                    .arg(promptStatus.promptLabel)
+                                    .arg(promptStatus.requiredCount - promptStatus.completedCount);
+
+            if (promptStatus.invalidCount > 0)
+            {
+                missingText += QString(" (%1 invalid ignored)")
+                                .arg(promptStatus.invalidCount);
+            }
+
+            missingParts << missingText;
         }
     }
 
@@ -440,12 +494,34 @@ void MainWindow::syncSessionMetadataFromUi()
     currentSession_.promptLabel = promptLabelEdit_->text().trimmed();
 }
 
+void MainWindow::syncSessionQualityFromUi()
+{
+    currentSession_.typedCharacterCount = typingArea_->typedCharacterCount();
+    currentSession_.promptCharacterCount = typingArea_->promptCharacterCount();
+    currentSession_.mistakeCount = typingArea_->mistakeCount();
+
+    const bool fixedTextMode =
+        textModeCombo_->currentText() == QStringLiteral("fixed_text");
+
+    const bool freeTextMode =
+        textModeCombo_->currentText() == QStringLiteral("free_text");
+
+    currentSession_.sampleValid =
+        (fixedTextMode && typingArea_->isCompleteAndCorrect()) ||
+        (freeTextMode &&
+         typingArea_->typedCharacterCount() >= minimumFreeTextCharacters());
+}
+
 void MainWindow::startNewSession()
 {
     currentSession_.id = QUuid::createUuid();
     currentSession_.startedAtUtc = QDateTime::currentDateTimeUtc();
     currentSession_.events.clear();
     currentSession_.ignoredAutoRepeatCount = 0;
+    currentSession_.typedCharacterCount = 0;
+    currentSession_.promptCharacterCount = 0;
+    currentSession_.mistakeCount = 0;
+    currentSession_.sampleValid = false;
     syncSessionMetadataFromUi();
 }
 
@@ -486,6 +562,11 @@ void MainWindow::updateSessionStatus()
             .arg(promptProgressText()));
 }
 
+int MainWindow::minimumFreeTextCharacters() const
+{
+    return 80;
+}
+
 bool MainWindow::currentSessionIsReadyToSave() const
 {
     if (currentParticipantId().isEmpty())
@@ -493,13 +574,23 @@ bool MainWindow::currentSessionIsReadyToSave() const
         return false;
     }
 
-    if (!consentCheckBox_->isChecked())
+    const bool consentConfirmed =
+        consentCheckBox_->isChecked() ||
+        (enrollmentActive_ && enrollmentConsentConfirmed_);
+
+    if (!consentConfirmed)
     {
         return false;
     }
 
     if (textModeCombo_->currentText() == QStringLiteral("fixed_text") &&
         !typingArea_->isCompleteAndCorrect())
+    {
+        return false;
+    }
+
+    if (textModeCombo_->currentText() == QStringLiteral("free_text") &&
+        typingArea_->typedCharacterCount() < minimumFreeTextCharacters())
     {
         return false;
     }
@@ -523,7 +614,9 @@ QString MainWindow::promptProgressText() const
 
     if (promptCount == 0)
     {
-        return "Prompt: -";
+        return QString("Free text: %1/%2 chars")
+            .arg(typedCount)
+            .arg(minimumFreeTextCharacters());
     }
 
     const QString state =
@@ -539,6 +632,9 @@ QString MainWindow::promptProgressText() const
 bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
                                              bool resetConsentAfterSave)
 {
+    syncSessionMetadataFromUi();
+    syncSessionQualityFromUi();
+
     const SessionSummary summary =
         FeatureExtractor::buildSessionSummary(currentSession_);
 
@@ -549,21 +645,20 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
 
     if (currentSession_.participantId.isEmpty())
     {
-        syncSessionMetadataFromUi();
-    }
-
-    if (currentSession_.participantId.isEmpty())
-    {
         QMessageBox::warning(this, "Missing Participant ID",
                              "Please enter a participant ID before saving the session.");
         participantIdCombo_->setFocus();
         return false;
     }
 
-    if (!consentCheckBox_->isChecked())
+    const bool consentConfirmed =
+        consentCheckBox_->isChecked() ||
+        (enrollmentActive_ && enrollmentConsentConfirmed_);
+
+    if (!consentConfirmed)
     {
         QMessageBox::warning(this, "Consent Required",
-                             "Please confirm consent before saving the typing sample.");
+                            "Please confirm consent before saving the session.");
         consentCheckBox_->setFocus();
         return false;
     }
@@ -641,6 +736,18 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
 
     DatabaseStats databaseStats;
 
+    AuditEventRecord auditEvent;
+    auditEvent.eventType = QStringLiteral("session_saved");
+    auditEvent.participantId = currentSession_.participantId;
+    auditEvent.sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
+    auditEvent.details = QString("purpose=%1; text_mode=%2; sample_valid=%3; stored_events=%4")
+                            .arg(currentSession_.samplePurpose)
+                            .arg(currentSession_.textMode)
+                            .arg(currentSession_.sampleValid ? "true" : "false")
+                            .arg(summary.storedEvents);
+
+    databaseManager_.saveAuditEvent(auditEvent);
+
     if (!databaseManager_.loadDatabaseStats(databaseStats))
     {
         QMessageBox::warning(
@@ -665,7 +772,8 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
                 "Participants: %5\n"
                 "Sessions: %6\n"
                 "Events: %7\n"
-                "Feature rows: %8")
+                "Feature rows: %8\n"
+                "Audit events: %9")
                 .arg(QDir::toNativeSeparators(featureFilePath))
                 .arg(QDir::toNativeSeparators(rawSessionFilePath))
                 .arg(QDir::toNativeSeparators(databaseManager_.databaseFilePath()))
@@ -674,12 +782,13 @@ bool MainWindow::saveCurrentSessionToStorage(bool showSuccessMessage,
                 .arg(databaseStats.sessionCount)
                 .arg(databaseStats.eventCount)
                 .arg(databaseStats.featureRowCount)
+                .arg(databaseStats.auditEventCount)
             );
     }
 
     typingArea_->resetTypedText();
 
-    if (resetConsentAfterSave)
+    if (resetConsentAfterSave && !enrollmentActive_)
     {
         consentCheckBox_->setChecked(false);
     }
@@ -713,6 +822,15 @@ void MainWindow::startEnrollment()
 
     EnrollmentStatus status;
 
+    if (!consentCheckBox_->isChecked())
+    {
+        QMessageBox::warning(this,
+                            "Consent Required",
+                            "Please confirm consent before starting enrollment.");
+        consentCheckBox_->setFocus();
+        return;
+    }
+
     if (!databaseManager_.loadEnrollmentStatus(participantId, status))
     {
         QMessageBox::warning(this, "Enrollment Failed",
@@ -743,6 +861,7 @@ void MainWindow::startEnrollment()
     }
 
     enrollmentActive_ = true;
+    enrollmentConsentConfirmed_ = true;
     enrollmentStepIndex_ = 0;
 
     configureEnrollmentStep();
@@ -765,6 +884,8 @@ void MainWindow::saveEnrollmentStep()
     if (enrollmentStepIndex_ >= enrollmentPromptLabels_.size())
     {
         enrollmentActive_ = false;
+        enrollmentConsentConfirmed_ = false;
+        consentCheckBox_->setChecked(false);
         updateEnrollmentControls();
         updateEnrollmentStatus();
 
@@ -819,10 +940,11 @@ void MainWindow::updateEnrollmentControls()
     samplePurposeCombo_->setEnabled(!enrollmentActive_);
     textModeCombo_->setEnabled(!enrollmentActive_);
     attemptTypeCombo_->setEnabled(!enrollmentActive_);
-    promptCombo_->setEnabled(!enrollmentActive_);
 
     buildProfileButton_->setEnabled(!enrollmentActive_);
     verifySessionButton_->setEnabled(!enrollmentActive_);
+
+    updateTextModeControls();
 
     const bool readyToSave = currentSessionIsReadyToSave();
 
@@ -845,7 +967,13 @@ void MainWindow::updateEnrollmentControls()
 void MainWindow::resetCurrentSession()
 {
     typingArea_->resetTypedText();
-    consentCheckBox_->setChecked(false);
+
+    if (!enrollmentActive_)
+    {
+        consentCheckBox_->setChecked(false);
+        enrollmentConsentConfirmed_ = false;
+    }
+
     startNewSession();
     updateSessionStatus();
     updateSaveButtonState();
@@ -894,22 +1022,61 @@ void MainWindow::buildCurrentParticipantProfile()
     const UserProfile profile =
         ProfileModel::buildProfile(participantId, trainingSamples);
 
+    if (!databaseManager_.saveUserProfile(profile))
+    {
+        QMessageBox::warning(
+            this,
+            "Profile Save Failed",
+            QString("Could not save profile:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    UserProfile savedProfile;
+
+    if (!databaseManager_.loadUserProfile(participantId, savedProfile))
+    {
+        QMessageBox::warning(
+            this,
+            "Profile Load Failed",
+            QString("Profile was saved, but could not be loaded back:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    AuditEventRecord auditEvent;
+    auditEvent.eventType = QStringLiteral("profile_built");
+    auditEvent.participantId = savedProfile.participantId;
+    auditEvent.details = QString("model_version=%1; feature_set_version=%2; training_sessions=%3")
+                            .arg(savedProfile.modelVersion)
+                            .arg(savedProfile.featureSetVersion)
+                            .arg(savedProfile.trainingSessionCount);
+
+    databaseManager_.saveAuditEvent(auditEvent);
+
     QMessageBox::information(
         this,
-        "Profile Built",
+        "Profile Built and Saved",
         QString(
             "Participant: %1\n"
-            "Training sessions: %2\n\n"
-            "Dwell mean: %3 ms\n"
-            "Dwell stddev: %4 ms\n\n"
-            "Flight mean: %5 ms\n"
-            "Flight stddev: %6 ms")
-            .arg(profile.participantId)
-            .arg(profile.trainingSessionCount)
-            .arg(profile.averageDwellMsMean, 0, 'f', 2)
-            .arg(profile.averageDwellMsStdDev, 0, 'f', 2)
-            .arg(profile.averageFlightMsMean, 0, 'f', 2)
-            .arg(profile.averageFlightMsStdDev, 0, 'f', 2));
+            "Model version: %2\n"
+            "Feature set version: %3\n"
+            "Created at UTC: %4\n"
+            "Training sessions: %5\n\n"
+            "Dwell mean: %6 ms\n"
+            "Dwell stddev: %7 ms\n\n"
+            "Flight mean: %8 ms\n"
+            "Flight stddev: %9 ms\n\n"
+            "Profile saved to SQLite.")
+            .arg(savedProfile.participantId)
+            .arg(savedProfile.modelVersion)
+            .arg(savedProfile.featureSetVersion)
+            .arg(savedProfile.createdAtUtc)
+            .arg(savedProfile.trainingSessionCount)
+            .arg(savedProfile.averageDwellMsMean, 0, 'f', 2)
+            .arg(savedProfile.averageDwellMsStdDev, 0, 'f', 2)
+            .arg(savedProfile.averageFlightMsMean, 0, 'f', 2)
+            .arg(savedProfile.averageFlightMsStdDev, 0, 'f', 2));
 }
 
 void MainWindow::verifyCurrentSession()
@@ -940,30 +1107,46 @@ void MainWindow::verifyCurrentSession()
         return;
     }
 
-    QVector<SessionFeatureVector> trainingSamples;
+    UserProfile profile;
 
-    if (!databaseManager_.loadTrainingFeatureVectors(participantId, trainingSamples))
+    if (!databaseManager_.loadUserProfile(participantId, profile))
     {
         QMessageBox::warning(
             this,
             "Verification Failed",
-            QString("Could not load training samples:\n%1")
+            QString("Could not load saved profile:\n%1\n\n"
+                    "Build the participant profile first.")
                 .arg(databaseManager_.lastErrorText()));
         return;
     }
 
-    if (trainingSamples.isEmpty())
+    int currentValidTrainingSampleCount = 0;
+
+    if (!databaseManager_.countValidTrainingSamples(participantId,
+                                                    currentValidTrainingSampleCount))
     {
-        QMessageBox::information(
+        QMessageBox::warning(
             this,
-            "No Training Data",
-            QString("No training samples found for participant '%1'.")
-                .arg(participantId));
+            "Verification Failed",
+            QString("Could not check training sample count:\n%1")
+                .arg(databaseManager_.lastErrorText()));
         return;
     }
 
-    const UserProfile profile =
-        ProfileModel::buildProfile(participantId, trainingSamples);
+    if (currentValidTrainingSampleCount != profile.trainingSessionCount)
+    {
+        QMessageBox::warning(
+            this,
+            "Profile Outdated",
+            QString(
+                "The saved profile is outdated.\n\n"
+                "Profile training sessions: %1\n"
+                "Current valid training sessions: %2\n\n"
+                "Please rebuild the participant profile before verification.")
+                .arg(profile.trainingSessionCount)
+                .arg(currentValidTrainingSampleCount));
+        return;
+    }
 
     const SessionFeatureVector currentFeatures =
         FeatureExtractor::buildFeatureVector(currentSession_, currentSummary);
@@ -977,6 +1160,9 @@ void MainWindow::verifyCurrentSession()
     result.sessionId = currentSession_.id.toString(QUuid::WithoutBraces);
     result.participantId = participantId;
     result.attemptType = attemptTypeCombo_->currentText();
+    result.profileModelVersion = profile.modelVersion;
+    result.profileFeatureSetVersion = profile.featureSetVersion;
+    result.profileCreatedAtUtc = profile.createdAtUtc;
     result.totalScore = decision.score.totalScore;
     result.dwellDeviation = decision.score.dwellDeviation;
     result.flightDeviation = decision.score.flightDeviation;
@@ -994,6 +1180,20 @@ void MainWindow::verifyCurrentSession()
         return;
     }
 
+    AuditEventRecord auditEvent;
+    auditEvent.eventType = QStringLiteral("verification_completed");
+    auditEvent.participantId = result.participantId;
+    auditEvent.sessionId = result.sessionId;
+    auditEvent.details = QString("attempt_type=%1; accepted=%2; score=%3; threshold=%4; model_version=%5; feature_set_version=%6")
+                            .arg(result.attemptType)
+                            .arg(result.accepted ? "true" : "false")
+                            .arg(result.totalScore, 0, 'f', 3)
+                            .arg(result.threshold, 0, 'f', 3)
+                            .arg(result.profileModelVersion)
+                            .arg(result.profileFeatureSetVersion);
+
+    databaseManager_.saveAuditEvent(auditEvent);
+
     QMessageBox::information(
         this,
         "Verification Result",
@@ -1005,7 +1205,10 @@ void MainWindow::verifyCurrentSession()
             "Threshold: %5\n\n"
             "Dwell deviation: %6\n"
             "Flight deviation: %7\n\n"
-            "Training sessions: %8\n\n"
+            "Training sessions: %8\n"
+            "Model version: %9\n"
+            "Feature set version: %10\n"
+            "Profile created at UTC: %11\n\n"
             "Verification result saved to SQLite.")
             .arg(participantId)
             .arg(decision.accepted ? "ACCEPTED" : "REJECTED")
@@ -1014,7 +1217,43 @@ void MainWindow::verifyCurrentSession()
             .arg(decision.threshold, 0, 'f', 3)
             .arg(decision.score.dwellDeviation, 0, 'f', 3)
             .arg(decision.score.flightDeviation, 0, 'f', 3)
-            .arg(profile.trainingSessionCount));
+            .arg(profile.trainingSessionCount)
+            .arg(profile.modelVersion)
+            .arg(profile.featureSetVersion)
+            .arg(profile.createdAtUtc));
+}
+
+void MainWindow::exportAuditLog()
+{
+    QVector<AuditEventExportRow> rows;
+
+    if (!databaseManager_.loadAuditEventRows(rows))
+    {
+        QMessageBox::warning(
+            this,
+            "Audit Export Failed",
+            QString("Could not load audit events:\n%1")
+                .arg(databaseManager_.lastErrorText()));
+        return;
+    }
+
+    const QString filePath = AuditEventsCsvWriter::defaultFilePath();
+
+    if (!AuditEventsCsvWriter::writeRows(filePath, rows))
+    {
+        QMessageBox::warning(
+            this,
+            "Audit Export Failed",
+            "Could not write audit events CSV file.");
+        return;
+    }
+
+    QMessageBox::information(
+        this,
+        "Audit Exported",
+        QString("Audit events exported: %1\n\nFile:\n%2")
+            .arg(rows.size())
+            .arg(QDir::toNativeSeparators(filePath)));
 }
 
 void MainWindow::showVerificationStats()

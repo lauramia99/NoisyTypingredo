@@ -217,6 +217,11 @@ SessionFeatureVector FeatureExtractor::buildFeatureVector(const TypingSession &s
     vector.sessionId = session.id.toString(QUuid::WithoutBraces);
     vector.startedAtUtcIso = session.startedAtUtc.toString(Qt::ISODateWithMs);
 
+    vector.typedCharacterCount = session.typedCharacterCount;
+    vector.promptCharacterCount = session.promptCharacterCount;
+    vector.mistakeCount = session.mistakeCount;
+    vector.sampleValid = session.sampleValid;
+
     vector.storedEvents = summary.storedEvents;
     vector.pressCount = summary.pressCount;
     vector.releaseCount = summary.releaseCount;

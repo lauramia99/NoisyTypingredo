@@ -9,6 +9,7 @@
 
 #include "typingsession.h"
 #include "sessionsummary.h"
+#include "profilemodel.h"
 
 namespace {
 const QString kConnectionName = QStringLiteral("noisytyping_connection");
@@ -154,6 +155,10 @@ bool DatabaseManager::initializeSchema()
     if (!query.exec(
             "CREATE TABLE IF NOT EXISTS session_features ("
             "session_id TEXT PRIMARY KEY,"
+            "typed_character_count INTEGER NOT NULL,"
+            "prompt_character_count INTEGER NOT NULL,"
+            "mistake_count INTEGER NOT NULL,"
+            "sample_valid INTEGER NOT NULL,"
             "stored_events INTEGER NOT NULL,"
             "press_count INTEGER NOT NULL,"
             "release_count INTEGER NOT NULL,"
@@ -178,6 +183,140 @@ bool DatabaseManager::initializeSchema()
         return false;
     }
 
+    const auto ensureSessionFeatureColumn =
+        [this](const QString &columnName, const QString &definition) {
+            QSqlQuery columnQuery(database_);
+
+            if (!columnQuery.exec("PRAGMA table_info(session_features)"))
+            {
+                lastErrorText_ = columnQuery.lastError().text();
+                return false;
+            }
+
+            while (columnQuery.next())
+            {
+                if (columnQuery.value(1).toString() == columnName)
+                {
+                    return true;
+                }
+            }
+
+            QSqlQuery alterQuery(database_);
+            const QString statement =
+                QString("ALTER TABLE session_features ADD COLUMN %1 %2")
+                    .arg(columnName, definition);
+
+            if (!alterQuery.exec(statement))
+            {
+                lastErrorText_ = alterQuery.lastError().text();
+                return false;
+            }
+
+            return true;
+        };
+
+        
+    const auto ensureVerificationResultColumn =
+        [this](const QString &columnName, const QString &definition) {
+            QSqlQuery columnQuery(database_);
+
+            if (!columnQuery.exec("PRAGMA table_info(verification_results)"))
+            {
+                lastErrorText_ = columnQuery.lastError().text();
+                return false;
+            }
+
+            while (columnQuery.next())
+            {
+                if (columnQuery.value(1).toString() == columnName)
+                {
+                    return true;
+                }
+            }
+
+            QSqlQuery alterQuery(database_);
+            const QString statement =
+                QString("ALTER TABLE verification_results ADD COLUMN %1 %2")
+                    .arg(columnName, definition);
+
+            if (!alterQuery.exec(statement))
+            {
+                lastErrorText_ = alterQuery.lastError().text();
+                return false;
+            }
+
+            return true;
+        };
+
+    const auto ensureUserProfileColumn =
+        [this](const QString &columnName, const QString &definition) {
+            QSqlQuery columnQuery(database_);
+
+            if (!columnQuery.exec("PRAGMA table_info(user_profiles)"))
+            {
+                lastErrorText_ = columnQuery.lastError().text();
+                return false;
+            }
+
+            while (columnQuery.next())
+            {
+                if (columnQuery.value(1).toString() == columnName)
+                {
+                    return true;
+                }
+            }
+
+            QSqlQuery alterQuery(database_);
+            const QString statement =
+                QString("ALTER TABLE user_profiles ADD COLUMN %1 %2")
+                    .arg(columnName, definition);
+
+            if (!alterQuery.exec(statement))
+            {
+                lastErrorText_ = alterQuery.lastError().text();
+                return false;
+            }
+
+            return true;
+        };
+
+    if (!ensureSessionFeatureColumn(QStringLiteral("typed_character_count"),
+                                    QStringLiteral("INTEGER NOT NULL DEFAULT 0")) ||
+        !ensureSessionFeatureColumn(QStringLiteral("prompt_character_count"),
+                                    QStringLiteral("INTEGER NOT NULL DEFAULT 0")) ||
+        !ensureSessionFeatureColumn(QStringLiteral("mistake_count"),
+                                    QStringLiteral("INTEGER NOT NULL DEFAULT 0")) ||
+        !ensureSessionFeatureColumn(QStringLiteral("sample_valid"),
+                                    QStringLiteral("INTEGER NOT NULL DEFAULT 0")))
+    {
+        return false;
+    }
+
+    if (!query.exec(
+        "CREATE TABLE IF NOT EXISTS user_profiles ("
+        "participant_id TEXT PRIMARY KEY,"
+        "model_version TEXT NOT NULL,"
+        "feature_set_version TEXT NOT NULL DEFAULT 'timing_basic_v1',"
+        "created_at_utc TEXT NOT NULL,"
+        "training_session_count INTEGER NOT NULL,"
+        "average_dwell_ms_mean REAL NOT NULL,"
+        "average_dwell_ms_stddev REAL NOT NULL,"
+        "average_flight_ms_mean REAL NOT NULL,"
+        "average_flight_ms_stddev REAL NOT NULL,"
+        "FOREIGN KEY(participant_id) REFERENCES participants(participant_id)"
+        ")"))
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    if (!ensureUserProfileColumn(
+            QStringLiteral("feature_set_version"),
+            QStringLiteral("TEXT NOT NULL DEFAULT 'timing_basic_v1'")))
+    {
+        return false;
+    }
+
     if (!query.exec(
             "CREATE TABLE IF NOT EXISTS verification_results ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -191,6 +330,9 @@ bool DatabaseManager::initializeSchema()
             "accepted INTEGER NOT NULL,"
             "training_session_count INTEGER NOT NULL,"
             "attempt_type TEXT NOT NULL,"
+            "profile_model_version TEXT NOT NULL DEFAULT 'unknown',"
+            "profile_feature_set_version TEXT NOT NULL DEFAULT 'unknown',"
+            "profile_created_at_utc TEXT NOT NULL DEFAULT '',"
             "FOREIGN KEY(session_id) REFERENCES sessions(session_id),"
             "FOREIGN KEY(participant_id) REFERENCES participants(participant_id)"
             ")"))
@@ -199,6 +341,32 @@ bool DatabaseManager::initializeSchema()
         return false;
     }
 
+    if (!ensureVerificationResultColumn(
+            QStringLiteral("profile_model_version"),
+            QStringLiteral("TEXT NOT NULL DEFAULT 'unknown'")) ||
+        !ensureVerificationResultColumn(
+            QStringLiteral("profile_feature_set_version"),
+            QStringLiteral("TEXT NOT NULL DEFAULT 'unknown'")) ||
+        !ensureVerificationResultColumn(
+            QStringLiteral("profile_created_at_utc"),
+            QStringLiteral("TEXT NOT NULL DEFAULT ''")))
+    {
+        return false;
+    }
+
+    if (!query.exec(
+            "CREATE TABLE IF NOT EXISTS audit_events ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "created_at_utc TEXT NOT NULL,"
+            "event_type TEXT NOT NULL,"
+            "participant_id TEXT,"
+            "session_id TEXT,"
+            "details TEXT NOT NULL"
+            ")"))
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
 
     return true;
 }
@@ -296,12 +464,15 @@ bool DatabaseManager::loadEnrollmentStatus(const QString &participantId,
     {
         QSqlQuery query(database_);
         query.prepare(
-            "SELECT COUNT(*) "
-            "FROM sessions "
-            "WHERE participant_id = ? "
-            "AND sample_purpose = 'training' "
-            "AND text_mode = 'fixed_text' "
-            "AND prompt_label = ?");
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN f.sample_valid = 1 THEN 1 ELSE 0 END), 0), "
+            "COALESCE(SUM(CASE WHEN f.sample_valid IS NULL OR f.sample_valid != 1 THEN 1 ELSE 0 END), 0) "
+            "FROM sessions s "
+            "LEFT JOIN session_features f ON f.session_id = s.session_id "
+            "WHERE s.participant_id = ? "
+            "AND s.sample_purpose = 'training' "
+            "AND s.text_mode = 'fixed_text' "
+            "AND s.prompt_label = ?");
 
         query.addBindValue(normalizedParticipantId);
         query.addBindValue(promptStatus.promptLabel);
@@ -319,6 +490,7 @@ bool DatabaseManager::loadEnrollmentStatus(const QString &participantId,
         }
 
         promptStatus.completedCount = query.value(0).toInt();
+        promptStatus.invalidCount = query.value(1).toInt();
 
         status.requiredTotal += promptStatus.requiredCount;
 
@@ -339,6 +511,121 @@ bool DatabaseManager::loadEnrollmentStatus(const QString &participantId,
 
     return true;
 }
+
+bool DatabaseManager::saveUserProfile(const UserProfile &profile)
+{
+    lastErrorText_.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    if (!ensureParticipantExists(profile.participantId))
+    {
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "INSERT OR REPLACE INTO user_profiles "
+        "(participant_id, model_version, feature_set_version, created_at_utc, training_session_count, "
+        "average_dwell_ms_mean, average_dwell_ms_stddev, "
+        "average_flight_ms_mean, average_flight_ms_stddev) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+
+    query.addBindValue(profile.participantId);
+    const QString modelVersion =
+        profile.modelVersion.isEmpty()
+            ? QStringLiteral("baseline_v1")
+            : profile.modelVersion;
+
+    const QString createdAtUtc =
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+
+    query.addBindValue(modelVersion);
+
+    const QString featureSetVersion =
+        profile.featureSetVersion.isEmpty()
+            ? QStringLiteral("timing_basic_v1")
+            : profile.featureSetVersion;
+
+    query.addBindValue(featureSetVersion);
+    query.addBindValue(createdAtUtc);
+    query.addBindValue(profile.trainingSessionCount);
+    query.addBindValue(profile.averageDwellMsMean);
+    query.addBindValue(profile.averageDwellMsStdDev);
+    query.addBindValue(profile.averageFlightMsMean);
+    query.addBindValue(profile.averageFlightMsStdDev);
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    return true;
+}
+
+bool DatabaseManager::loadUserProfile(const QString &participantId,
+                                      UserProfile &profile)
+{
+    lastErrorText_.clear();
+    profile = UserProfile{};
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    const QString normalizedParticipantId = participantId.trimmed();
+
+    if (normalizedParticipantId.isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Participant ID is empty.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "SELECT participant_id, model_version, feature_set_version, created_at_utc, "
+        "training_session_count, "
+        "average_dwell_ms_mean, average_dwell_ms_stddev, "
+        "average_flight_ms_mean, average_flight_ms_stddev "
+        "FROM user_profiles "
+        "WHERE participant_id = ?");
+
+    query.addBindValue(normalizedParticipantId);
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    if (!query.next())
+    {
+        lastErrorText_ =
+            QString("No saved profile found for participant '%1'.")
+                .arg(normalizedParticipantId);
+        return false;
+    }
+
+    profile.participantId = query.value(0).toString();
+    profile.modelVersion = query.value(1).toString();
+    profile.featureSetVersion = query.value(2).toString();
+    profile.createdAtUtc = query.value(3).toString();
+    profile.trainingSessionCount = query.value(4).toInt();
+    profile.averageDwellMsMean = query.value(5).toDouble();
+    profile.averageDwellMsStdDev = query.value(6).toDouble();
+    profile.averageFlightMsMean = query.value(7).toDouble();
+    profile.averageFlightMsStdDev = query.value(8).toDouble();
+
+    return true;
+}
+
 
 bool DatabaseManager::saveSession(const TypingSession &session,
                                   const SessionSummary &summary,
@@ -432,14 +719,18 @@ bool DatabaseManager::saveSession(const TypingSession &session,
     QSqlQuery featureQuery(database_);
     featureQuery.prepare(
         "INSERT OR REPLACE INTO session_features "
-        "(session_id, stored_events, press_count, release_count, "
+        "(session_id, typed_character_count, prompt_character_count, mistake_count, sample_valid, stored_events, press_count, release_count, "
         "ignored_auto_repeat_count, overlap_press_count, unmatched_release_count, "
         "keys_still_pressed_count, duration_ms, average_dwell_ms, min_dwell_ms, "
         "max_dwell_ms, average_flight_ms, min_flight_ms, max_flight_ms, "
         "overlap_ratio, unmatched_release_ratio, ignored_repeat_ratio) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
     featureQuery.addBindValue(sessionId);
+    featureQuery.addBindValue(features.typedCharacterCount);
+    featureQuery.addBindValue(features.promptCharacterCount);
+    featureQuery.addBindValue(features.mistakeCount);
+    featureQuery.addBindValue(features.sampleValid ? 1 : 0);
     featureQuery.addBindValue(features.storedEvents);
     featureQuery.addBindValue(features.pressCount);
     featureQuery.addBindValue(features.releaseCount);
@@ -598,6 +889,68 @@ bool DatabaseManager::loadDatabaseStats(DatabaseStats &stats)
         stats.featureRowCount = featureQuery.value(0).toInt();
     }
 
+
+    QSqlQuery auditQuery(database_);
+    if (!auditQuery.exec("SELECT COUNT(*) FROM audit_events"))
+    {
+        lastErrorText_ = auditQuery.lastError().text();
+        return false;
+    }
+
+    if (auditQuery.next())
+    {
+        stats.auditEventCount = auditQuery.value(0).toInt();
+    }
+
+    return true;
+}
+
+bool DatabaseManager::countValidTrainingSamples(const QString &participantId,
+                                                int &count)
+{
+    lastErrorText_.clear();
+    count = 0;
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    const QString normalizedParticipantId = participantId.trimmed();
+
+    if (normalizedParticipantId.isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Participant ID is empty.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "SELECT COUNT(*) "
+        "FROM session_features f "
+        "JOIN sessions s ON s.session_id = f.session_id "
+        "WHERE s.participant_id = ? "
+        "AND s.sample_purpose = 'training' "
+        "AND s.text_mode = 'fixed_text' "
+        "AND s.prompt_label IN ('prompt_01', 'prompt_02', 'prompt_03') "
+        "AND f.sample_valid = 1");
+
+    query.addBindValue(normalizedParticipantId);
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    if (!query.next())
+    {
+        lastErrorText_ = QStringLiteral("Could not count valid training samples.");
+        return false;
+    }
+
+    count = query.value(0).toInt();
     return true;
 }
 
@@ -625,6 +978,8 @@ bool DatabaseManager::loadTrainingFeatureVectors(
         "SELECT "
         "s.participant_id, s.sample_purpose, s.text_mode, s.prompt_label, "
         "s.session_id, s.started_at_utc, "
+        "f.typed_character_count, f.prompt_character_count, "
+        "f.mistake_count, f.sample_valid, "
         "f.stored_events, f.press_count, f.release_count, "
         "f.ignored_auto_repeat_count, f.overlap_press_count, "
         "f.unmatched_release_count, f.keys_still_pressed_count, "
@@ -638,6 +993,7 @@ bool DatabaseManager::loadTrainingFeatureVectors(
         "AND s.sample_purpose = 'training' "
         "AND s.text_mode = 'fixed_text' "
         "AND s.prompt_label IN ('prompt_01', 'prompt_02', 'prompt_03') "
+        "AND f.sample_valid = 1 "
         "ORDER BY s.started_at_utc ASC");
 
     query.addBindValue(participantId.trimmed());
@@ -659,27 +1015,32 @@ bool DatabaseManager::loadTrainingFeatureVectors(
         vector.sessionId = query.value(4).toString();
         vector.startedAtUtcIso = query.value(5).toString();
 
-        vector.storedEvents = query.value(6).toInt();
-        vector.pressCount = query.value(7).toInt();
-        vector.releaseCount = query.value(8).toInt();
-        vector.ignoredAutoRepeatCount = query.value(9).toInt();
-        vector.overlapPressCount = query.value(10).toInt();
-        vector.unmatchedReleaseCount = query.value(11).toInt();
-        vector.keysStillPressedCount = query.value(12).toInt();
+        vector.typedCharacterCount = query.value(6).toInt();
+        vector.promptCharacterCount = query.value(7).toInt();
+        vector.mistakeCount = query.value(8).toInt();
+        vector.sampleValid = query.value(9).toInt() != 0;
 
-        vector.durationMs = query.value(13).toDouble();
+        vector.storedEvents = query.value(10).toInt();
+        vector.pressCount = query.value(11).toInt();
+        vector.releaseCount = query.value(12).toInt();
+        vector.ignoredAutoRepeatCount = query.value(13).toInt();
+        vector.overlapPressCount = query.value(14).toInt();
+        vector.unmatchedReleaseCount = query.value(15).toInt();
+        vector.keysStillPressedCount = query.value(16).toInt();
 
-        vector.averageDwellMs = query.value(14).toDouble();
-        vector.minDwellMs = query.value(15).toDouble();
-        vector.maxDwellMs = query.value(16).toDouble();
+        vector.durationMs = query.value(17).toDouble();
 
-        vector.averageFlightMs = query.value(17).toDouble();
-        vector.minFlightMs = query.value(18).toDouble();
-        vector.maxFlightMs = query.value(19).toDouble();
+        vector.averageDwellMs = query.value(18).toDouble();
+        vector.minDwellMs = query.value(19).toDouble();
+        vector.maxDwellMs = query.value(20).toDouble();
 
-        vector.overlapRatio = query.value(20).toDouble();
-        vector.unmatchedReleaseRatio = query.value(21).toDouble();
-        vector.ignoredRepeatRatio = query.value(22).toDouble();
+        vector.averageFlightMs = query.value(21).toDouble();
+        vector.minFlightMs = query.value(22).toDouble();
+        vector.maxFlightMs = query.value(23).toDouble();
+
+        vector.overlapRatio = query.value(24).toDouble();
+        vector.unmatchedReleaseRatio = query.value(25).toDouble();
+        vector.ignoredRepeatRatio = query.value(26).toDouble();
 
         features.append(vector);
     }
@@ -700,14 +1061,18 @@ bool DatabaseManager::saveVerificationResult(const VerificationResultRecord &res
     QSqlQuery query(database_);
     query.prepare(
         "INSERT INTO verification_results "
-        "(session_id, participant_id, attempt_type, created_at_utc, total_score, "
+        "(session_id, participant_id, attempt_type, profile_model_version, "
+        "profile_feature_set_version, profile_created_at_utc, created_at_utc, total_score, "
         "dwell_deviation, flight_deviation, threshold_value, accepted, "
         "training_session_count) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
     query.addBindValue(result.sessionId);
     query.addBindValue(result.participantId);
     query.addBindValue(result.attemptType);
+    query.addBindValue(result.profileModelVersion);
+    query.addBindValue(result.profileFeatureSetVersion);
+    query.addBindValue(result.profileCreatedAtUtc);
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
     query.addBindValue(result.totalScore);
     query.addBindValue(result.dwellDeviation);
@@ -720,6 +1085,81 @@ bool DatabaseManager::saveVerificationResult(const VerificationResultRecord &res
     {
         lastErrorText_ = query.lastError().text();
         return false;
+    }
+
+    return true;
+}
+
+bool DatabaseManager::saveAuditEvent(const AuditEventRecord &event)
+{
+    lastErrorText_.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    if (event.eventType.trimmed().isEmpty())
+    {
+        lastErrorText_ = QStringLiteral("Audit event type is empty.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "INSERT INTO audit_events "
+        "(created_at_utc, event_type, participant_id, session_id, details) "
+        "VALUES (?, ?, ?, ?, ?)");
+
+    query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    query.addBindValue(event.eventType.trimmed());
+    query.addBindValue(event.participantId.trimmed());
+    query.addBindValue(event.sessionId.trimmed());
+    query.addBindValue(event.details);
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    return true;
+}
+
+bool DatabaseManager::loadAuditEventRows(QVector<AuditEventExportRow> &rows)
+{
+    lastErrorText_.clear();
+    rows.clear();
+
+    if (!database_.isOpen())
+    {
+        lastErrorText_ = QStringLiteral("Database is not open.");
+        return false;
+    }
+
+    QSqlQuery query(database_);
+    query.prepare(
+        "SELECT created_at_utc, event_type, participant_id, session_id, details "
+        "FROM audit_events "
+        "ORDER BY created_at_utc ASC, id ASC");
+
+    if (!query.exec())
+    {
+        lastErrorText_ = query.lastError().text();
+        return false;
+    }
+
+    while (query.next())
+    {
+        AuditEventExportRow row;
+        row.createdAtUtc = query.value(0).toString();
+        row.eventType = query.value(1).toString();
+        row.participantId = query.value(2).toString();
+        row.sessionId = query.value(3).toString();
+        row.details = query.value(4).toString();
+
+        rows.append(row);
     }
 
     return true;
@@ -850,7 +1290,9 @@ bool DatabaseManager::loadVerificationResultRows(
 
     QSqlQuery query(database_);
     query.prepare(
-        "SELECT participant_id, session_id, attempt_type, created_at_utc, "
+        "SELECT participant_id, session_id, attempt_type, "
+        "profile_model_version, profile_feature_set_version, "
+        "profile_created_at_utc, created_at_utc, "
         "accepted, threshold_value, total_score, dwell_deviation, "
         "flight_deviation, training_session_count "
         "FROM verification_results "
@@ -871,13 +1313,16 @@ bool DatabaseManager::loadVerificationResultRows(
         row.participantId = query.value(0).toString();
         row.sessionId = query.value(1).toString();
         row.attemptType = query.value(2).toString();
-        row.createdAtUtc = query.value(3).toString();
-        row.accepted = query.value(4).toInt() != 0;
-        row.threshold = query.value(5).toDouble();
-        row.totalScore = query.value(6).toDouble();
-        row.dwellDeviation = query.value(7).toDouble();
-        row.flightDeviation = query.value(8).toDouble();
-        row.trainingSessionCount = query.value(9).toInt();
+        row.profileModelVersion = query.value(3).toString();
+        row.profileFeatureSetVersion = query.value(4).toString();
+        row.profileCreatedAtUtc = query.value(5).toString();
+        row.createdAtUtc = query.value(6).toString();
+        row.accepted = query.value(7).toInt() != 0;
+        row.threshold = query.value(8).toDouble();
+        row.totalScore = query.value(9).toDouble();
+        row.dwellDeviation = query.value(10).toDouble();
+        row.flightDeviation = query.value(11).toDouble();
+        row.trainingSessionCount = query.value(12).toInt();
 
         rows.append(row);
     }

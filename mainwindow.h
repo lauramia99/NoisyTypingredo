@@ -29,6 +29,7 @@ private:
     void appendEvent(const KeystrokeEvent &event);
 
     void updateSessionStatus();
+    void updateTextModeControls();
 
     void saveCurrentSession();
     void resetCurrentSession();
@@ -58,6 +59,12 @@ private:
     void configureEnrollmentStep();
     void updateEnrollmentControls();
 
+    int minimumFreeTextCharacters() const;
+
+    void syncSessionQualityFromUi();
+
+    void exportAuditLog();
+
     typingtextedit *typingArea_ = nullptr;
     QComboBox *participantIdCombo_ = nullptr;
     QComboBox *samplePurposeCombo_ = nullptr;
@@ -73,12 +80,14 @@ private:
     QPushButton *thresholdAnalysisButton_ = nullptr;
     QPushButton *startEnrollmentButton_ = nullptr;
     QPushButton *saveAndNextEnrollmentButton_ = nullptr;
+    QPushButton *exportAuditLogButton_ = nullptr;
     QDoubleSpinBox *verificationThresholdSpinBox_ = nullptr;
     QLabel *enrollmentStatusLabel_ = nullptr;
     QLabel *enrollmentProgressLabel_ = nullptr;
     QComboBox *promptCombo_ = nullptr;
 
     bool enrollmentActive_ = false;
+    bool enrollmentConsentConfirmed_ = false;
     int enrollmentStepIndex_ = 0;
     QStringList enrollmentPromptLabels_;
 

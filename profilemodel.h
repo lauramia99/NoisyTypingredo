@@ -11,6 +11,10 @@ struct UserProfile
     QString participantId;
     int trainingSessionCount = 0;
 
+    QString modelVersion;
+    QString featureSetVersion;
+    QString createdAtUtc;
+
     double averageDwellMsMean = 0.0;
     double averageDwellMsStdDev = 0.0;
 

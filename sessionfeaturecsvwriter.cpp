@@ -36,7 +36,7 @@ QString escapeCsv(QString value)
 QString csvHeader()
 {
     return QStringLiteral(
-        "participant_id,sample_purpose,text_mode,prompt_label,session_id,started_at_utc,stored_events,press_count,release_count,"
+        "participant_id,sample_purpose,text_mode,prompt_label,session_id,started_at_utc,typed_character_count,prompt_character_count,mistake_count,sample_valid,stored_events,press_count,release_count,"
         "ignored_auto_repeat_count,overlap_press_count,unmatched_release_count,"
         "keys_still_pressed_count,duration_ms,average_dwell_ms,min_dwell_ms,max_dwell_ms,"
         "average_flight_ms,min_flight_ms,max_flight_ms,overlap_ratio,"
@@ -52,6 +52,10 @@ QString toCsvRow(const SessionFeatureVector &vector)
     columns << escapeCsv(vector.promptLabel);
     columns << escapeCsv(vector.sessionId);
     columns << escapeCsv(vector.startedAtUtcIso);
+    columns << QString::number(vector.typedCharacterCount);
+    columns << QString::number(vector.promptCharacterCount);
+    columns << QString::number(vector.mistakeCount);
+    columns << (vector.sampleValid ? "1" : "0");
     columns << QString::number(vector.storedEvents);
     columns << QString::number(vector.pressCount);
     columns << QString::number(vector.releaseCount);

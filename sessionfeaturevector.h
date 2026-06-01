@@ -37,6 +37,11 @@ struct SessionFeatureVector
     double overlapRatio = 0.0;
     double unmatchedReleaseRatio = 0.0;
     double ignoredRepeatRatio = 0.0;
+
+    int typedCharacterCount = 0;
+    int mistakeCount = 0;
+    int promptCharacterCount = 0;
+    bool sampleValid = false;
 };
 
 #endif // SESSIONFEATUREVECTOR_H

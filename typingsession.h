@@ -20,6 +20,11 @@ struct TypingSession
     QString samplePurpose;
     QString textMode;
     QString promptLabel;
+
+    int typedCharacterCount = 0;
+    int promptCharacterCount = 0;
+    int mistakeCount = 0;
+    bool sampleValid = false;
 };
 
 #endif // TYPINGSESSION_H
